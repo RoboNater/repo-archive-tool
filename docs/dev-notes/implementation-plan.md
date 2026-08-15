@@ -91,7 +91,7 @@ the later phases.
 
 ## Phase 1: Shared Archive Infrastructure
 
-- [ ] Implement a safe subprocess wrapper for Git and Git LFS with structured stdout, stderr, and return-code capture.
+- [x] Implement a safe subprocess wrapper for Git and Git LFS with structured stdout, stderr, and return-code capture.
 - [ ] Redact credentials and tokens from remote URLs, diagnostics, manifests, reports, and exceptions.
 - [ ] Normalize HTTPS, SSH/SCP, `file://`, and local-path remotes.
 - [ ] Derive stable archive locations while preventing traversal, unsafe names, and accidental collisions; support `--name` overrides.
