@@ -1,5 +1,12 @@
 # Repository Agent Instructions
 
+## Git Workflow
+
+Unless the user directs otherwise, create a dedicated branch at the beginning
+of work. When the task is complete, commit the changes and create a pull
+request. Use the `codex/` branch prefix unless the user specifies another
+naming convention.
+
 ## Implementation Plan
 
 Before starting any implementation, testing, design, or documentation task, read both `repo-archive-tool-spec.md` and `docs/dev-notes/implementation-plan.md`.

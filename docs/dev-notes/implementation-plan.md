@@ -1,6 +1,6 @@
 # repo-archive-tool Implementation Plan
 
-**Status:** Planned  
+**Status:** In progress
 **Last reviewed:** 2026-08-15  
 **Governing specification:** [`repo-archive-tool-spec.md`](../../repo-archive-tool-spec.md)
 
@@ -10,7 +10,7 @@ This is the working implementation plan for `repo-archive-tool`. Keep it aligned
 
 - [x] Initial product specification exists.
 - [x] MIT license selected.
-- [ ] Python project and development tooling bootstrapped.
+- [x] Python project and development tooling bootstrapped.
 - [ ] Core archive MVP implemented.
 - [ ] LFS-aware archival implemented.
 - [ ] Bundle snapshots implemented.
@@ -67,13 +67,13 @@ The exact module boundaries may be adjusted as code emerges, but Git operations,
 
 ## Phase 0: Project Bootstrap
 
-- [ ] Create `pyproject.toml` with package metadata, Python 3.11+ requirement, and a `repo-archive` console entry point.
-- [ ] Configure a uv-managed development dependency group containing `pytest` and `ruff`.
-- [ ] Generate and commit `uv.lock` with `uv lock`.
-- [ ] Create the `src/repo_archive` package and test directories.
-- [ ] Configure Ruff linting/formatting and pytest defaults in `pyproject.toml`.
-- [ ] Add CI for supported Python versions on Linux, Windows, and macOS using `uv sync --locked` followed by the same checks used locally.
-- [ ] Establish the standard local workflow:
+- [x] Create `pyproject.toml` with package metadata, Python 3.11+ requirement, and a `repo-archive` console entry point.
+- [x] Configure a uv-managed development dependency group containing `pytest` and `ruff`.
+- [x] Generate and commit `uv.lock` with `uv lock`.
+- [x] Create the `src/repo_archive` package and test directories.
+- [x] Configure Ruff linting/formatting and pytest defaults in `pyproject.toml`.
+- [x] Add CI for supported Python versions on Linux, Windows, and macOS using `uv sync --locked` followed by the same checks used locally.
+- [x] Establish the standard local workflow:
 
   ```bash
   uv sync --dev
@@ -84,6 +84,10 @@ The exact module boundaries may be adjusted as code emerges, but Git operations,
   ```
 
 **Exit criterion:** A fresh checkout can be set up and all empty/skeleton checks run exclusively through uv.
+
+**Completed 2026-08-15:** Bootstrap currently targets Python 3.11–3.13 in CI.
+The only CLI behavior is `--help` and `--version`; archive subcommands begin in
+the later phases.
 
 ## Phase 1: Shared Archive Infrastructure
 
@@ -279,4 +283,3 @@ Whenever implementation work changes project state, update this file in the same
 - Add newly discovered work or risks instead of leaving them implicit.
 - Update the review date when the plan is substantively checked.
 - Keep README and usage-guide tasks synchronized with actual CLI behavior.
-
