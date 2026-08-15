@@ -122,21 +122,33 @@ uses this contract while archive subcommands are implemented in Phase 2.
 
 ## Phase 2: Core Mirror Backup and Update
 
-- [ ] Implement `backup <remote-url> --root <archive-root>`.
-- [ ] Create new archives with `git clone --mirror` into a temporary sibling path.
-- [ ] Implement repeatable backup/update behavior with mirror fetch and prune semantics.
-- [ ] Stage updates separately and promote them only after fetch and core validation succeed, preserving the previous valid mirror on failure.
-- [ ] Enumerate refs, branches, tags, symbolic `HEAD`, and the configured source remote.
-- [ ] Populate manifest source, archive, and Git fields.
-- [ ] Implement `update <archive-path>` using the same safe update path.
-- [ ] Add `--root`, `--name`, `--no-lfs`, `--bundle`, `--metadata`, `--json`, and `--verbose` plumbing as applicable.
-- [ ] Classify authentication, transport, invalid-repository, and integrity failures when the underlying tools provide reliable evidence.
+- [x] Implement `backup <remote-url> --root <archive-root>`.
+- [x] Create new archives with `git clone --mirror` into a temporary sibling path.
+- [x] Implement repeatable backup/update behavior with mirror fetch and prune semantics.
+- [x] Stage updates separately and promote them only after fetch and core validation succeed, preserving the previous valid mirror on failure.
+- [x] Enumerate refs, branches, tags, symbolic `HEAD`, and the configured source remote.
+- [x] Populate manifest source, archive, and Git fields.
+- [x] Implement `update <archive-path>` using the same safe update path.
+- [x] Add `--root`, `--name`, `--no-lfs`, `--bundle`, `--metadata`, `--json`, and `--verbose` plumbing as applicable.
+- [x] Classify authentication, invalid-repository, and integrity failures when the underlying tools provide reliable evidence; other transport errors remain general failures pending stable Git diagnostics.
 
 **Exit criterion:** A repository with multiple branches and tags can be archived and updated idempotently, deleted remote refs are pruned, and a failed update does not replace the last valid mirror.
 
+**Completed 2026-08-15:** `backup` creates and validates a staged native Git
+mirror before publication; existing mirrors are locally cloned, refreshed with
+`remote update --prune`, validated with `git fsck --full`, and then promoted
+with rollback protection. `update` follows the same path from the configured
+`origin`. Both operations persist current source and Git manifest fields.
+The future-facing LFS, bundle, metadata, and expanded-diagnostics flags are
+accepted explicitly and report that their requested work is deferred rather
+than silently being ignored. Windows read-only Git objects are made writable
+only while removing the retired promoted mirror. Local Git integration tests
+cover branches, lightweight and annotated tags, idempotent update, pruning,
+and failed-update preservation.
+
 ## Phase 3: Manifests, Reports, Info, and Verification
 
-- [ ] Write schema-versioned `manifest.json` after successful archive state changes.
+- [x] Write schema-versioned `manifest.json` after successful archive state changes.
 - [ ] Generate atomic `reports/latest.json` and `reports/latest.txt` for every operation attempt.
 - [ ] Keep last-successful archive timestamps distinct from failed-attempt reporting.
 - [ ] Implement `info <archive-path>` with source, timestamps, refs, LFS, submodules, snapshots, metadata, and last-verification summaries.
@@ -198,13 +210,13 @@ uses this contract while archive subcommands are implemented in Phase 2.
 
 ### Integration tests
 
-- [ ] Mirror creation with multiple branches and lightweight/annotated tags.
-- [ ] Idempotent update and fetching new commits/refs.
-- [ ] Pruning deleted remote refs.
+- [x] Mirror creation with multiple branches and lightweight/annotated tags.
+- [x] Idempotent update and fetching new commits/refs.
+- [x] Pruning deleted remote refs.
 - [ ] Full object verification.
 - [ ] Bundle creation and verification.
 - [ ] Offline restoration from a mirror and a bundle.
-- [ ] Failed update preserving the prior usable archive.
+- [x] Failed update preserving the prior usable archive.
 - [ ] CLI JSON output and exit codes.
 - [ ] Conditional LFS archive and restore tests when Git LFS is installed.
 - [ ] Separation of network-dependent tests from the default suite.
