@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 import stat
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -109,6 +110,9 @@ def _create_or_update(
 ) -> OperationResult:
     layout.ensure_directories()
     existing = layout.mirror_path.exists()
+    identity_error = _validate_source_identity(layout, remote, runner, existing)
+    if identity_error is not None:
+        return identity_error
     staging_root = Path(tempfile.mkdtemp(prefix=".mirror-staging-", dir=layout.path))
     staged_mirror = staging_root / "mirror.git"
     try:
@@ -221,6 +225,44 @@ def _updated_manifest(
     return replace(existing, source=source, archive=archive, git=git)
 
 
+def _validate_source_identity(
+    layout: ArchiveLayout,
+    requested_remote: Remote,
+    runner: GitRunner,
+    mirror_exists: bool,
+) -> OperationResult | None:
+    """Prevent a named archive from being silently repurposed for another source."""
+    if not mirror_exists:
+        return None
+    try:
+        source_url = str(load_manifest(layout.manifest_path).source["url"])
+    except (FileNotFoundError, KeyError, TypeError, ValueError):
+        configured_remote = runner.git(
+            "remote", "get-url", "origin", cwd=layout.mirror_path
+        )
+        if not configured_remote.succeeded:
+            return _failure_result(
+                "backup",
+                layout,
+                "source identity",
+                configured_remote,
+                ErrorKind.CONFIGURATION,
+            )
+        source_url = configured_remote.stdout.strip()
+    try:
+        existing_remote = normalize_remote(source_url)
+    except ValueError as error:
+        return _configuration_failure("backup", layout, str(error))
+    if existing_remote.canonical_url == requested_remote.canonical_url:
+        return None
+    return _configuration_failure(
+        "backup",
+        layout,
+        "Archive source does not match the requested remote. "
+        "Use a new archive name or an explicit migration operation.",
+    )
+
+
 def _promote(staged_mirror: Path, mirror_path: Path) -> None:
     """Replace a mirror only after staging has succeeded, retaining rollback safety."""
     previous = mirror_path.with_name(f".mirror-previous-{uuid4().hex}")
@@ -236,7 +278,7 @@ def _promote(staged_mirror: Path, mirror_path: Path) -> None:
         raise
     else:
         if moved_previous:
-            shutil.rmtree(previous, onexc=_remove_readonly)
+            shutil.rmtree(previous, onerror=_remove_readonly)
 
 
 def _failure_result(
@@ -293,9 +335,30 @@ def _state_message(state: MirrorState) -> str:
     )
 
 
-def _remove_readonly(function: object, path: str, error: BaseException) -> None:
+def _configuration_failure(
+    operation: str, layout: ArchiveLayout, message: str
+) -> OperationResult:
+    return OperationResult(
+        operation=operation,
+        archive_path=layout.path,
+        components=(
+            ComponentResult(
+                "source identity",
+                ComponentStatus.FAILED,
+                message,
+                ErrorKind.CONFIGURATION,
+            ),
+        ),
+        errors=(message,),
+    )
+
+
+def _remove_readonly(
+    function: Callable[[str], object], path: str, exception_info: tuple[object, ...]
+) -> None:
     """Retry Windows Git object cleanup after removing its read-only attribute."""
+    error = exception_info[1]
     if not isinstance(error, PermissionError):
         raise error
     Path(path).chmod(stat.S_IWRITE)
-    function(path)  # type: ignore[operator]
+    function(path)

@@ -142,9 +142,13 @@ with rollback protection. `update` follows the same path from the configured
 The future-facing LFS, bundle, metadata, and expanded-diagnostics flags are
 accepted explicitly and report that their requested work is deferred rather
 than silently being ignored. Windows read-only Git objects are made writable
-only while removing the retired promoted mirror. Local Git integration tests
-cover branches, lightweight and annotated tags, idempotent update, pruning,
-and failed-update preservation.
+only while removing the retired promoted mirror using Python 3.11-compatible
+`shutil.rmtree(..., onerror=...)` behavior. Existing archives reject a
+different requested source before staging, preventing a reused `--name` from
+silently replacing its mirror. Local Git integration tests cover branches,
+lightweight and annotated tags, idempotent update, pruning, failed-update
+preservation, source-identity protection, and Windows `file://` source
+round-tripping.
 
 ## Phase 3: Manifests, Reports, Info, and Verification
 

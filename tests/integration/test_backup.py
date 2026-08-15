@@ -101,3 +101,20 @@ def test_failed_update_keeps_the_last_valid_mirror(tmp_path: Path) -> None:
     assert result.outcome is Outcome.FAILED
     assert git("rev-parse", "main", cwd=layout.mirror_path) == previous_head
     assert git("fsck", "--full", cwd=layout.mirror_path) == ""
+
+
+def test_backup_refuses_to_replace_a_named_archive_from_another_source(
+    tmp_path: Path,
+) -> None:
+    first_remote, _ = create_remote(tmp_path / "first")
+    second_remote, _ = create_remote(tmp_path / "second")
+    layout = ArchiveLayout(tmp_path / "archives" / "daily")
+    assert backup_archive(str(first_remote), layout).outcome is Outcome.COMPLETE
+    original_head = git("rev-parse", "main", cwd=layout.mirror_path)
+
+    result = backup_archive(str(second_remote), layout)
+
+    assert result.outcome is Outcome.FAILED
+    assert result.exit_code == 2
+    assert git("rev-parse", "main", cwd=layout.mirror_path) == original_head
+    assert load_manifest(layout.manifest_path).source["url"] == first_remote.as_uri()

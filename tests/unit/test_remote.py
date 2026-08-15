@@ -45,6 +45,15 @@ def test_normalize_local_remote_and_prevent_name_collisions(tmp_path: Path) -> N
     )
 
 
+def test_normalize_file_url_round_trips_a_local_remote(tmp_path: Path) -> None:
+    remote_path = tmp_path / "repo.git"
+
+    remote = normalize_remote(remote_path.as_uri())
+
+    assert remote.is_local is True
+    assert remote.canonical_url == remote_path.resolve().as_uri()
+
+
 def test_name_override_is_a_single_safe_component(tmp_path: Path) -> None:
     remote = normalize_remote("https://example.test/team/repo.git")
 
