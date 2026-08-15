@@ -17,3 +17,9 @@ def test_redact_sensitive_text_removes_common_secret_forms() -> None:
     assert redact_sensitive_text(value) == (
         "token=*** access_token=*** password=***\nAuthorization: ***"
     )
+
+
+def test_redact_url_preserves_ssh_identity_and_ipv6_port() -> None:
+    assert redact_url("ssh://alice@[2001:db8::1]:2222/team/repo.git") == (
+        "ssh://alice@[2001:db8::1]:2222/team/repo.git"
+    )

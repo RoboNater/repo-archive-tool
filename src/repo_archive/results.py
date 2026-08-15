@@ -59,7 +59,7 @@ class OperationResult:
     exit_code: int = field(init=False)
 
     def __post_init__(self) -> None:
-        outcome = aggregate_outcome(self.components)
+        outcome = aggregate_outcome(self.components, self.warnings, self.errors)
         object.__setattr__(self, "outcome", outcome)
         object.__setattr__(self, "exit_code", exit_code_for(outcome, self.components))
 
@@ -75,14 +75,22 @@ class OperationResult:
         }
 
 
-def aggregate_outcome(components: tuple[ComponentResult, ...]) -> Outcome:
+def aggregate_outcome(
+    components: tuple[ComponentResult, ...],
+    warnings: tuple[str, ...] = (),
+    errors: tuple[str, ...] = (),
+) -> Outcome:
     """Aggregate component results using the documented completeness model."""
     statuses = {component.status for component in components}
+    if errors:
+        return Outcome.FAILED
     if ComponentStatus.FAILED in statuses:
         return Outcome.FAILED
     if ComponentStatus.PARTIAL in statuses:
         return Outcome.PARTIAL
     if ComponentStatus.WARNING in statuses:
+        return Outcome.COMPLETE_WITH_WARNINGS
+    if warnings:
         return Outcome.COMPLETE_WITH_WARNINGS
     return Outcome.COMPLETE
 

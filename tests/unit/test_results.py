@@ -77,6 +77,13 @@ def test_json_output_has_stable_required_fields() -> None:
     }
 
 
+def test_public_error_messages_produce_a_failure_result() -> None:
+    result = OperationResult("backup", Path("archive"), errors=("backup failed",))
+
+    assert result.outcome == Outcome.FAILED
+    assert result.exit_code == 1
+
+
 def test_latest_reports_are_written_atomically(tmp_path: Path) -> None:
     result = OperationResult(
         "verify", tmp_path, (ComponentResult("git", ComponentStatus.COMPLETE),)

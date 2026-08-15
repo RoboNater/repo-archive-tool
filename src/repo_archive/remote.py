@@ -22,6 +22,8 @@ class Remote:
     original: str
     canonical_url: str
     host: str
+    port: int | None
+    user: str | None
     path: tuple[str, ...]
     is_local: bool
 
@@ -47,17 +49,31 @@ def normalize_remote(value: str) -> Remote:
     if scp_match and not parsed.scheme and not _WINDOWS_PATH.match(value):
         host = scp_match.group("host").lower()
         path = _path_parts(scp_match.group("path"))
-        return Remote(value, f"ssh://{host}/{'/'.join(path)}.git", host, path, False)
+        user = scp_match.group("user")
+        canonical_url = (
+            f"ssh://{_user_prefix(user)}{_authority(host, None)}/{'/'.join(path)}.git"
+        )
+        return Remote(value, canonical_url, host, None, user, path, False)
 
     if parsed.scheme in {"http", "https", "ssh"}:
         if not parsed.hostname:
             raise ValueError("Remote URL must include a host.")
         host = parsed.hostname.lower()
-        if parsed.port:
-            host = f"{host}-{parsed.port}"
+        port = parsed.port
+        user = parsed.username if parsed.scheme == "ssh" else None
         path = _path_parts(parsed.path)
+        canonical_url = (
+            f"{parsed.scheme}://{_user_prefix(user)}{_authority(host, port)}"
+            f"/{'/'.join(path)}.git"
+        )
         return Remote(
-            value, f"{parsed.scheme}://{host}/{'/'.join(path)}.git", host, path, False
+            value,
+            canonical_url,
+            host,
+            port,
+            user,
+            path,
+            False,
         )
 
     if parsed.scheme == "file":
@@ -70,7 +86,7 @@ def normalize_remote(value: str) -> Remote:
     repository = _strip_git_suffix(local_path.name)
     if not repository:
         raise ValueError("Local remote path must name a repository.")
-    return Remote(value, local_path.as_uri(), "local", (repository,), True)
+    return Remote(value, local_path.as_uri(), "local", None, None, (repository,), True)
 
 
 def derive_archive_path(root: Path, remote: Remote, name: str | None = None) -> Path:
@@ -82,7 +98,11 @@ def derive_archive_path(root: Path, remote: Remote, name: str | None = None) -> 
         digest = sha256(remote.canonical_url.encode()).hexdigest()[:12]
         components = ("local", digest, _safe_component(remote.repository))
     else:
-        components = (_safe_component(remote.host), *map(_safe_component, remote.path))
+        components = (
+            _safe_component(remote.host),
+            *map(_safe_component, remote.path[:-1]),
+            f"{_safe_component(remote.repository)}--{_identity_suffix(remote)}",
+        )
     candidate = root.joinpath(*components)
     if root != candidate and root not in candidate.parents:
         raise ValueError("Archive path escapes the archive root.")
@@ -118,3 +138,16 @@ def _safe_component(value: str) -> str:
     if not normalized:
         raise ValueError("Archive path component has no safe characters.")
     return normalized
+
+
+def _authority(host: str, port: int | None) -> str:
+    bracketed_host = f"[{host}]" if ":" in host else host
+    return f"{bracketed_host}:{port}" if port is not None else bracketed_host
+
+
+def _user_prefix(user: str | None) -> str:
+    return f"{user}@" if user else ""
+
+
+def _identity_suffix(remote: Remote) -> str:
+    return sha256(remote.canonical_url.encode()).hexdigest()[:12]

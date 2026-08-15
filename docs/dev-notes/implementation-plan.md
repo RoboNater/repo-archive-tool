@@ -26,6 +26,9 @@ This is the working implementation plan for `repo-archive-tool`. Keep it aligned
 - Use `pytest` for tests and `ruff` for linting and formatting, both installed and invoked through uv.
 - Keep generic Git archival independent from provider-specific metadata exporters.
 - Favor correctness and recoverability over update speed. Existing valid archives must survive failed refresh attempts.
+- Preserve remote URL authority (including IPv6 and non-default ports) separately
+  from filesystem-safe archive-path components. Archive paths include a stable
+  identity digest unless an explicit `--name` override is supplied.
 
 ## Target Project Structure
 
