@@ -81,3 +81,24 @@ def test_checked_failure_raises_with_result(mock_run: Mock) -> None:
 
     assert error.value.result.returncode == 1
     assert str(error.value) == "Git command failed with exit code 1."
+
+
+@patch("repo_archive.git.subprocess.run")
+def test_command_results_redact_sensitive_diagnostics(mock_run: Mock) -> None:
+    mock_run.return_value = subprocess.CompletedProcess(
+        args=("git", "fetch"),
+        returncode=1,
+        stdout="token=secret",
+        stderr=(
+            "fatal: https://user:password@example.test/repo.git\n"
+            "Authorization: Bearer secret"
+        ),
+    )
+
+    result = GitRunner().git("fetch", "https://user:password@example.test/repo.git")
+
+    assert result.command[-1] == "https://***@example.test/repo.git"
+    assert result.stdout == "token=***"
+    assert (
+        result.stderr == "fatal: https://***@example.test/repo.git\nAuthorization: ***"
+    )

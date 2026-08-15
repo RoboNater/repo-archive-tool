@@ -11,6 +11,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from repo_archive.security import redact_sensitive_text
+
 
 @dataclass(frozen=True)
 class CommandResult:
@@ -107,6 +109,13 @@ class GitRunner:
                 stdout=completed.stdout,
                 stderr=completed.stderr,
             )
+
+        result = CommandResult(
+            command=tuple(redact_sensitive_text(part) for part in result.command),
+            returncode=result.returncode,
+            stdout=redact_sensitive_text(result.stdout),
+            stderr=redact_sensitive_text(result.stderr),
+        )
 
         if check and not result.succeeded:
             raise CommandExecutionError(result)
