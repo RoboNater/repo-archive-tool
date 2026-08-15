@@ -26,6 +26,9 @@ This is the working implementation plan for `repo-archive-tool`. Keep it aligned
 - Use `pytest` for tests and `ruff` for linting and formatting, both installed and invoked through uv.
 - Keep generic Git archival independent from provider-specific metadata exporters.
 - Favor correctness and recoverability over update speed. Existing valid archives must survive failed refresh attempts.
+- Preserve remote URL authority (including IPv6 and non-default ports) separately
+  from filesystem-safe archive-path components. Archive paths include a stable
+  identity digest unless an explicit `--name` override is supplied.
 
 ## Target Project Structure
 
@@ -91,16 +94,16 @@ the later phases.
 
 ## Phase 1: Shared Archive Infrastructure
 
-- [ ] Implement a safe subprocess wrapper for Git and Git LFS with structured stdout, stderr, and return-code capture.
-- [ ] Redact credentials and tokens from remote URLs, diagnostics, manifests, reports, and exceptions.
-- [ ] Normalize HTTPS, SSH/SCP, `file://`, and local-path remotes.
-- [ ] Derive stable archive locations while preventing traversal, unsafe names, and accidental collisions; support `--name` overrides.
-- [ ] Manage the archive-set layout: `mirror.git`, `manifest.json`, `reports`, `snapshots`, and `metadata`.
-- [ ] Define schema-versioned manifest models and atomic JSON/text writers.
-- [ ] Define structured component and operation results.
-- [ ] Aggregate component results into `complete`, `complete-with-warnings`, `partial`, or `failed`.
-- [ ] Define stable machine-readable output with fields for operation, archive path, outcome, components, warnings, errors, and exit code.
-- [ ] Implement the documented exit-code convention:
+- [x] Implement a safe subprocess wrapper for Git and Git LFS with structured stdout, stderr, and return-code capture.
+- [x] Redact credentials and tokens from remote URLs, diagnostics, manifests, reports, and exceptions.
+- [x] Normalize HTTPS, SSH/SCP, `file://`, and local-path remotes.
+- [x] Derive stable archive locations while preventing traversal, unsafe names, and accidental collisions; support `--name` overrides.
+- [x] Manage the archive-set layout: `mirror.git`, `manifest.json`, `reports`, `snapshots`, and `metadata`.
+- [x] Define schema-versioned manifest models and atomic JSON/text writers.
+- [x] Define structured component and operation results.
+- [x] Aggregate component results into `complete`, `complete-with-warnings`, `partial`, or `failed`.
+- [x] Define stable machine-readable output with fields for operation, archive path, outcome, components, warnings, errors, and exit code.
+- [x] Implement the documented exit-code convention:
 
   - `0`: complete or complete with warnings
   - `1`: operation failed
@@ -110,6 +113,12 @@ the later phases.
   - `5`: authentication or authorization failure
 
 **Exit criterion:** Unit-tested primitives can safely resolve an archive, run a redacted command, persist a manifest/report atomically, and calculate an outcome.
+
+**Completed 2026-08-15:** Shared infrastructure now provides shell-free Git and
+Git LFS execution, safe normalized remote metadata, deterministic archive-set
+paths, version-1 manifests and atomic report persistence. `OperationResult`
+is the stable machine-readable result contract; current CLI `--json` output
+uses this contract while archive subcommands are implemented in Phase 2.
 
 ## Phase 2: Core Mirror Backup and Update
 
