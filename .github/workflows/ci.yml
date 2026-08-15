@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  checks:
+    name: Python ${{ matrix.python }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.6.2"
+          enable-cache: true
+      - name: Set up Python
+        run: uv python install ${{ matrix.python }}
+      - name: Install dependencies
+        run: uv sync --locked --dev --python ${{ matrix.python }}
+      - name: Check formatting
+        run: uv run ruff format --check .
+      - name: Lint
+        run: uv run ruff check .
+      - name: Test
+        run: uv run pytest
+      - name: Check CLI help
+        run: uv run repo-archive --help
