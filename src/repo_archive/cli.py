@@ -8,8 +8,9 @@ from pathlib import Path
 
 from repo_archive import __version__
 from repo_archive.archive import ArchiveLayout, backup_archive, update_archive
+from repo_archive.inspection import info_archive, verify_archive
 from repo_archive.remote import derive_archive_path, normalize_remote
-from repo_archive.reporting import emit_result
+from repo_archive.reporting import emit_result, write_latest_reports
 from repo_archive.results import (
     ComponentResult,
     ComponentStatus,
@@ -51,6 +52,23 @@ def build_parser() -> argparse.ArgumentParser:
     update.add_argument("archive_path", type=Path)
     update.add_argument("--json", action="store_true", dest="command_json")
     update.add_argument("--verbose", action="store_true", dest="command_verbose")
+
+    info = subcommands.add_parser("info", help="show archive contents and status")
+    info.add_argument("archive_path", type=Path)
+    info.add_argument("--json", action="store_true", dest="command_json")
+    info.add_argument("--verbose", action="store_true", dest="command_verbose")
+
+    verify = subcommands.add_parser("verify", help="verify an archive")
+    verify.add_argument("archive_path", type=Path)
+    verification_mode = verify.add_mutually_exclusive_group()
+    verification_mode.add_argument(
+        "--quick", action="store_true", help="skip object and bundle checks"
+    )
+    verification_mode.add_argument(
+        "--full", action="store_true", help="verify objects and bundle snapshots"
+    )
+    verify.add_argument("--json", action="store_true", dest="command_json")
+    verify.add_argument("--verbose", action="store_true", dest="command_verbose")
     return parser
 
 
@@ -72,6 +90,12 @@ def main() -> int:
             result = _add_deferred_option_warnings(result, arguments)
     elif arguments.command == "update":
         result = update_archive(ArchiveLayout(arguments.archive_path))
+    elif arguments.command == "info":
+        result = info_archive(ArchiveLayout(arguments.archive_path))
+    elif arguments.command == "verify":
+        result = verify_archive(
+            ArchiveLayout(arguments.archive_path), full=not arguments.quick
+        )
     else:
         result = OperationResult(
             operation="help",
@@ -84,6 +108,7 @@ def main() -> int:
                 ),
             ),
         )
+    _write_final_report(result)
     emit_result(result, sys.stdout, as_json=as_json)
     return result.exit_code
 
@@ -127,6 +152,12 @@ def _add_deferred_option_warnings(
         warnings=tuple(warnings),
         errors=result.errors,
     )
+
+
+def _write_final_report(result: OperationResult) -> None:
+    """Persist the exact result emitted by the CLI when it targets an archive."""
+    if result.archive_path is not None:
+        write_latest_reports(ArchiveLayout(result.archive_path).reports_path, result)
 
 
 if __name__ == "__main__":  # pragma: no cover

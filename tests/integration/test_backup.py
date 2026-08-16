@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from pathlib import Path
 
-from repo_archive.archive import ArchiveLayout, backup_archive, update_archive
+from repo_archive.archive import (
+    ArchiveLayout,
+    _remove_readonly,
+    backup_archive,
+    update_archive,
+)
+from repo_archive.inspection import info_archive, verify_archive
 from repo_archive.manifest import Manifest, load_manifest, write_json_atomic
 from repo_archive.remote import normalize_remote
 from repo_archive.results import Outcome
@@ -102,6 +109,60 @@ def test_failed_update_keeps_the_last_valid_mirror(tmp_path: Path) -> None:
     assert result.outcome is Outcome.FAILED
     assert git("rev-parse", "main", cwd=layout.mirror_path) == previous_head
     assert git("fsck", "--full", cwd=layout.mirror_path) == ""
+    report = (layout.reports_path / "latest.json").read_text(encoding="utf-8")
+    assert '"operation": "update"' in report
+    assert '"outcome": "failed"' in report
+
+
+def test_info_and_full_verification_report_archive_state(tmp_path: Path) -> None:
+    remote, _ = create_remote(tmp_path)
+    layout = ArchiveLayout(tmp_path / "archives" / "project")
+    assert backup_archive(str(remote), layout).outcome is Outcome.COMPLETE
+
+    info = info_archive(layout)
+    assert info.outcome is Outcome.COMPLETE
+    assert any(component.name == "snapshots" for component in info.components)
+
+    verification = verify_archive(layout)
+    assert verification.outcome is Outcome.COMPLETE
+    manifest = load_manifest(layout.manifest_path)
+    assert manifest.archive["last_verified_at"]
+    assert manifest.archive["last_verification_mode"] == "full"
+    assert '"operation": "verify"' in (layout.reports_path / "latest.json").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_quick_verification_skips_object_integrity(tmp_path: Path) -> None:
+    remote, _ = create_remote(tmp_path)
+    layout = ArchiveLayout(tmp_path / "archives" / "project")
+    assert backup_archive(str(remote), layout).outcome is Outcome.COMPLETE
+
+    verification = verify_archive(layout, full=False)
+
+    assert verification.outcome is Outcome.COMPLETE
+    assert not any(
+        component.name == "git integrity" for component in verification.components
+    )
+
+
+def test_quick_verification_rejects_a_non_bare_mirror(tmp_path: Path) -> None:
+    remote, _ = create_remote(tmp_path)
+    layout = ArchiveLayout(tmp_path / "archives" / "project")
+    assert backup_archive(str(remote), layout).outcome is Outcome.COMPLETE
+    shutil.rmtree(layout.mirror_path, onerror=_remove_readonly)
+    git("clone", str(remote), str(layout.mirror_path))
+
+    verification = verify_archive(layout, full=False)
+
+    structure = next(
+        component
+        for component in verification.components
+        if component.name == "repository structure"
+    )
+    assert structure.status.value == "failed"
+    assert verification.outcome is Outcome.FAILED
+    assert verification.exit_code == 2
 
 
 def test_backup_refuses_to_replace_a_named_archive_from_another_source(
