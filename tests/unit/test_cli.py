@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+from repo_archive.archive import ArchiveLayout
 from repo_archive.cli import build_parser, main
 from repo_archive.reporting import render_text
 from repo_archive.results import ComponentResult, ComponentStatus, OperationResult
@@ -15,7 +16,7 @@ def test_parser_has_expected_program_name() -> None:
     assert build_parser().prog == "repo-archive"
 
 
-def test_parser_accepts_phase_two_backup_arguments() -> None:
+def test_parser_accepts_backup_arguments() -> None:
     arguments = build_parser().parse_args(
         [
             "backup",
@@ -120,3 +121,40 @@ def test_backup_persists_the_decorated_cli_result(
             warnings=("--bundle has no effect until snapshot support is implemented.",),
         )
     )
+
+
+def test_no_lfs_is_forwarded_without_a_deferred_warning(
+    tmp_path: Path, capsys: object
+) -> None:
+    archive_path = tmp_path / "archives" / "project"
+    archive_result = OperationResult(
+        "backup",
+        archive_path,
+        components=(ComponentResult("lfs", ComponentStatus.PARTIAL),),
+    )
+    with (
+        patch(
+            "sys.argv",
+            [
+                "repo-archive",
+                "backup",
+                "https://example.test/team/repo.git",
+                "--root",
+                str(tmp_path / "archives"),
+                "--name",
+                "project",
+                "--no-lfs",
+                "--json",
+            ],
+        ),
+        patch("repo_archive.cli.backup_archive", return_value=archive_result) as backup,
+    ):
+        assert main() == 3
+
+    backup.assert_called_once_with(
+        "https://example.test/team/repo.git",
+        ArchiveLayout(archive_path),
+        lfs_enabled=False,
+    )
+    emitted = json.loads(capsys.readouterr().out)
+    assert emitted["warnings"] == []
