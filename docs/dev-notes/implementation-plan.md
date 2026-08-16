@@ -1,7 +1,7 @@
 # repo-archive-tool Implementation Plan
 
 **Status:** In progress
-**Last reviewed:** 2026-08-15  
+**Last reviewed:** 2026-08-16
 **Governing specification:** [`repo-archive-tool-spec.md`](../../repo-archive-tool-spec.md)
 
 This is the working implementation plan for `repo-archive-tool`. Keep it aligned with the repository as design decisions are made and phases are completed. The specification defines product requirements; this document records the intended implementation sequence and current project state.
@@ -180,7 +180,9 @@ manifest, source, refs, deferred-component statuses, bundle count, and last
 successful verification. `verify` checks bare-repository structure, source and
 manifest consistency, refs, and (by default) `git fsck --full` plus all present
 bundle snapshots. Successful checks record `last_verified_at` and mode in the
-manifest. `--quick` skips object/LFS/bundle work; `--full` is the default.
+manifest. The CLI rewrites reports after applying command-level deferred-work
+warnings so persisted reports exactly match the emitted result. `--quick` skips
+object/LFS/bundle work; `--full` is the default.
 
 ## Phase 4: Git LFS and Submodule Awareness
 

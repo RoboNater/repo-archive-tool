@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import patch
 
 from repo_archive.cli import build_parser, main
+from repo_archive.reporting import render_text
 from repo_archive.results import ComponentResult, ComponentStatus, OperationResult
 
 
@@ -74,3 +76,47 @@ def test_verify_json_emits_only_the_operation_result(capsys: object) -> None:
     captured = capsys.readouterr()  # type: ignore[attr-defined]
     assert json.loads(captured.out) == result.to_dict()
     assert captured.err == ""
+
+
+def test_backup_persists_the_decorated_cli_result(
+    tmp_path: Path, capsys: object
+) -> None:
+    archive_path = tmp_path / "archives" / "project"
+    archive_result = OperationResult(
+        "backup",
+        archive_path,
+        components=(ComponentResult("git mirror", ComponentStatus.COMPLETE),),
+    )
+    with (
+        patch(
+            "sys.argv",
+            [
+                "repo-archive",
+                "backup",
+                "https://example.test/team/repo.git",
+                "--root",
+                str(tmp_path / "archives"),
+                "--bundle",
+                "--json",
+            ],
+        ),
+        patch("repo_archive.cli.backup_archive", return_value=archive_result),
+    ):
+        assert main() == 0
+
+    emitted = json.loads(capsys.readouterr().out)
+    persisted = json.loads(
+        (archive_path / "reports" / "latest.json").read_text(encoding="utf-8")
+    )
+    assert emitted == persisted
+    assert any("--bundle has no effect" in warning for warning in persisted["warnings"])
+    assert (archive_path / "reports" / "latest.txt").read_text(
+        encoding="utf-8"
+    ) == render_text(
+        OperationResult(
+            "backup",
+            archive_path,
+            components=archive_result.components,
+            warnings=("--bundle has no effect until snapshot support is implemented.",),
+        )
+    )

@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from pathlib import Path
 
-from repo_archive.archive import ArchiveLayout, backup_archive, update_archive
+from repo_archive.archive import (
+    ArchiveLayout,
+    _remove_readonly,
+    backup_archive,
+    update_archive,
+)
 from repo_archive.inspection import info_archive, verify_archive
 from repo_archive.manifest import Manifest, load_manifest, write_json_atomic
 from repo_archive.remote import normalize_remote
@@ -138,6 +144,25 @@ def test_quick_verification_skips_object_integrity(tmp_path: Path) -> None:
     assert not any(
         component.name == "git integrity" for component in verification.components
     )
+
+
+def test_quick_verification_rejects_a_non_bare_mirror(tmp_path: Path) -> None:
+    remote, _ = create_remote(tmp_path)
+    layout = ArchiveLayout(tmp_path / "archives" / "project")
+    assert backup_archive(str(remote), layout).outcome is Outcome.COMPLETE
+    shutil.rmtree(layout.mirror_path, onerror=_remove_readonly)
+    git("clone", str(remote), str(layout.mirror_path))
+
+    verification = verify_archive(layout, full=False)
+
+    structure = next(
+        component
+        for component in verification.components
+        if component.name == "repository structure"
+    )
+    assert structure.status.value == "failed"
+    assert verification.outcome is Outcome.FAILED
+    assert verification.exit_code == 2
 
 
 def test_backup_refuses_to_replace_a_named_archive_from_another_source(

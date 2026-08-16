@@ -10,7 +10,7 @@ from repo_archive import __version__
 from repo_archive.archive import ArchiveLayout, backup_archive, update_archive
 from repo_archive.inspection import info_archive, verify_archive
 from repo_archive.remote import derive_archive_path, normalize_remote
-from repo_archive.reporting import emit_result
+from repo_archive.reporting import emit_result, write_latest_reports
 from repo_archive.results import (
     ComponentResult,
     ComponentStatus,
@@ -108,6 +108,7 @@ def main() -> int:
                 ),
             ),
         )
+    _write_final_report(result)
     emit_result(result, sys.stdout, as_json=as_json)
     return result.exit_code
 
@@ -151,6 +152,12 @@ def _add_deferred_option_warnings(
         warnings=tuple(warnings),
         errors=result.errors,
     )
+
+
+def _write_final_report(result: OperationResult) -> None:
+    """Persist the exact result emitted by the CLI when it targets an archive."""
+    if result.archive_path is not None:
+        write_latest_reports(ArchiveLayout(result.archive_path).reports_path, result)
 
 
 if __name__ == "__main__":  # pragma: no cover

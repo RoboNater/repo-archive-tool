@@ -81,9 +81,18 @@ def verify_archive(
         ComponentResult("manifest", ComponentStatus.COMPLETE, "Manifest loaded.")
     )
     bare = runner.git("rev-parse", "--is-bare-repository", cwd=layout.mirror_path)
-    if not bare.succeeded or bare.stdout.strip().lower() != "true":
+    if not bare.succeeded:
         components.append(
             _command_component("repository structure", bare, ErrorKind.CONFIGURATION)
+        )
+    elif bare.stdout.strip().lower() != "true":
+        components.append(
+            ComponentResult(
+                "repository structure",
+                ComponentStatus.FAILED,
+                "Archive mirror is not a bare Git repository.",
+                ErrorKind.CONFIGURATION,
+            )
         )
     else:
         components.append(
