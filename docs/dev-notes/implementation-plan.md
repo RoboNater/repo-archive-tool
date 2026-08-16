@@ -148,7 +148,8 @@ different requested source before staging, preventing a reused `--name` from
 silently replacing its mirror. Local Git integration tests cover branches,
 lightweight and annotated tags, idempotent update, pruning, failed-update
 preservation, source-identity protection, and Windows `file://` source
-round-tripping.
+round-tripping. Source-identity failures retain the initiating `backup` or
+`update` operation name in the stable machine-readable result.
 
 ## Phase 3: Manifests, Reports, Info, and Verification
 

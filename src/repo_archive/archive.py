@@ -110,7 +110,9 @@ def _create_or_update(
 ) -> OperationResult:
     layout.ensure_directories()
     existing = layout.mirror_path.exists()
-    identity_error = _validate_source_identity(layout, remote, runner, existing)
+    identity_error = _validate_source_identity(
+        layout, remote, runner, existing, operation
+    )
     if identity_error is not None:
         return identity_error
     staging_root = Path(tempfile.mkdtemp(prefix=".mirror-staging-", dir=layout.path))
@@ -230,6 +232,7 @@ def _validate_source_identity(
     requested_remote: Remote,
     runner: GitRunner,
     mirror_exists: bool,
+    operation: str,
 ) -> OperationResult | None:
     """Prevent a named archive from being silently repurposed for another source."""
     if not mirror_exists:
@@ -242,7 +245,7 @@ def _validate_source_identity(
         )
         if not configured_remote.succeeded:
             return _failure_result(
-                "backup",
+                operation,
                 layout,
                 "source identity",
                 configured_remote,
@@ -252,11 +255,11 @@ def _validate_source_identity(
     try:
         existing_remote = normalize_remote(source_url)
     except ValueError as error:
-        return _configuration_failure("backup", layout, str(error))
+        return _configuration_failure(operation, layout, str(error))
     if existing_remote.canonical_url == requested_remote.canonical_url:
         return None
     return _configuration_failure(
-        "backup",
+        operation,
         layout,
         "Archive source does not match the requested remote. "
         "Use a new archive name or an explicit migration operation.",

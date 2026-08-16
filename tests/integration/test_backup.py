@@ -6,7 +6,8 @@ import subprocess
 from pathlib import Path
 
 from repo_archive.archive import ArchiveLayout, backup_archive, update_archive
-from repo_archive.manifest import load_manifest
+from repo_archive.manifest import Manifest, load_manifest, write_json_atomic
+from repo_archive.remote import normalize_remote
 from repo_archive.results import Outcome
 
 
@@ -118,3 +119,19 @@ def test_backup_refuses_to_replace_a_named_archive_from_another_source(
     assert result.exit_code == 2
     assert git("rev-parse", "main", cwd=layout.mirror_path) == original_head
     assert load_manifest(layout.manifest_path).source["url"] == first_remote.as_uri()
+
+
+def test_update_identity_failure_preserves_its_operation_name(tmp_path: Path) -> None:
+    first_remote, _ = create_remote(tmp_path / "first")
+    second_remote, _ = create_remote(tmp_path / "second")
+    layout = ArchiveLayout(tmp_path / "archives" / "daily")
+    assert backup_archive(str(first_remote), layout).outcome is Outcome.COMPLETE
+    manifest = load_manifest(layout.manifest_path).to_dict()
+    manifest["source"] = Manifest.new(normalize_remote(str(second_remote))).source
+    write_json_atomic(layout.manifest_path, manifest)
+
+    result = update_archive(layout)
+
+    assert result.operation == "update"
+    assert result.outcome is Outcome.FAILED
+    assert result.exit_code == 2
