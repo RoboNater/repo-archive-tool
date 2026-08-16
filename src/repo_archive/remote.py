@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import sys
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -77,7 +78,7 @@ def normalize_remote(value: str) -> Remote:
         )
 
     if parsed.scheme == "file":
-        local_path = Path(unquote(parsed.path)).resolve()
+        local_path = Path(_file_url_path(parsed.path)).resolve()
     elif not parsed.scheme or _WINDOWS_PATH.match(value):
         local_path = Path(value).expanduser().resolve()
     else:
@@ -129,6 +130,14 @@ def _path_parts(raw_path: str) -> tuple[str, ...]:
 
 def _strip_git_suffix(name: str) -> str:
     return name[:-4] if name.lower().endswith(".git") else name
+
+
+def _file_url_path(value: str) -> str:
+    """Convert a file URL path to a native local path on supported platforms."""
+    path = unquote(value)
+    if sys.platform == "win32" and re.match(r"^/[A-Za-z]:/", path):
+        return path[1:]
+    return path
 
 
 def _safe_component(value: str) -> str:
