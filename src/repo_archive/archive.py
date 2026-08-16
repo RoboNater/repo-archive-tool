@@ -14,6 +14,7 @@ from uuid import uuid4
 from repo_archive.git import CommandResult, GitRunner
 from repo_archive.manifest import Manifest, load_manifest, write_json_atomic
 from repo_archive.remote import Remote, display_remote, normalize_remote
+from repo_archive.reporting import write_latest_reports
 from repo_archive.results import (
     ComponentResult,
     ComponentStatus,
@@ -72,7 +73,8 @@ def backup_archive(
     the current mirror.
     """
     remote = normalize_remote(remote_url)
-    return _create_or_update(layout, remote, runner or GitRunner(), "backup")
+    result = _create_or_update(layout, remote, runner or GitRunner(), "backup")
+    return _record_result(layout, result)
 
 
 def update_archive(
@@ -82,24 +84,29 @@ def update_archive(
     runner = runner or GitRunner()
     source = runner.git("remote", "get-url", "origin", cwd=layout.mirror_path)
     if not source.succeeded:
-        return _failure_result("update", layout, "source remote", source)
+        return _record_result(
+            layout, _failure_result("update", layout, "source remote", source)
+        )
     try:
         remote = normalize_remote(source.stdout.strip())
     except ValueError as error:
-        return OperationResult(
-            operation="update",
-            archive_path=layout.path,
-            components=(
-                ComponentResult(
-                    "source remote",
-                    ComponentStatus.FAILED,
-                    str(error),
-                    ErrorKind.CONFIGURATION,
+        return _record_result(
+            layout,
+            OperationResult(
+                operation="update",
+                archive_path=layout.path,
+                components=(
+                    ComponentResult(
+                        "source remote",
+                        ComponentStatus.FAILED,
+                        str(error),
+                        ErrorKind.CONFIGURATION,
+                    ),
                 ),
+                errors=(str(error),),
             ),
-            errors=(str(error),),
         )
-    return _create_or_update(layout, remote, runner, "update")
+    return _record_result(layout, _create_or_update(layout, remote, runner, "update"))
 
 
 def _create_or_update(
@@ -336,6 +343,12 @@ def _state_message(state: MirrorState) -> str:
         f"{state.ref_count} refs, {state.branch_count} branches, "
         f"{state.tag_count} tags."
     )
+
+
+def _record_result(layout: ArchiveLayout, result: OperationResult) -> OperationResult:
+    """Persist the latest operation attempt without changing its archive state."""
+    write_latest_reports(layout.reports_path, result)
+    return result
 
 
 def _configuration_failure(

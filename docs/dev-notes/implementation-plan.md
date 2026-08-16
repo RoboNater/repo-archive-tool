@@ -11,7 +11,7 @@ This is the working implementation plan for `repo-archive-tool`. Keep it aligned
 - [x] Initial product specification exists.
 - [x] MIT license selected.
 - [x] Python project and development tooling bootstrapped.
-- [ ] Core archive MVP implemented.
+- [x] Core archive MVP implemented.
 - [ ] LFS-aware archival implemented.
 - [ ] Bundle snapshots implemented.
 - [ ] Usage and project documentation completed.
@@ -154,10 +154,10 @@ round-tripping. Source-identity failures retain the initiating `backup` or
 ## Phase 3: Manifests, Reports, Info, and Verification
 
 - [x] Write schema-versioned `manifest.json` after successful archive state changes.
-- [ ] Generate atomic `reports/latest.json` and `reports/latest.txt` for every operation attempt.
-- [ ] Keep last-successful archive timestamps distinct from failed-attempt reporting.
-- [ ] Implement `info <archive-path>` with source, timestamps, refs, LFS, submodules, snapshots, metadata, and last-verification summaries.
-- [ ] Implement `verify <archive-path>` checks for:
+- [x] Generate atomic `reports/latest.json` and `reports/latest.txt` for every operation attempt that identifies an archive set.
+- [x] Keep last-successful archive timestamps distinct from failed-attempt reporting.
+- [x] Implement `info <archive-path>` with source, timestamps, refs, LFS, submodules, snapshots, metadata, and last-verification summaries.
+- [x] Implement `verify <archive-path>` checks for:
 
   - repository existence and bare-repository structure;
   - source remote configuration;
@@ -167,10 +167,20 @@ round-tripping. Source-identity failures retain the initiating `backup` or
   - LFS completeness when applicable;
   - selected or all bundle snapshots when requested.
 
-- [ ] Define `--quick` as structural/configuration checks and `--full` as object, LFS, and snapshot verification; use full verification by default.
-- [ ] Ensure `--json` writes only the stable JSON result to stdout and routes diagnostics appropriately.
+- [x] Define `--quick` as structural/configuration checks and `--full` as object, LFS, and snapshot verification; use full verification by default.
+- [x] Ensure `--json` writes only the stable JSON result to stdout and routes diagnostics appropriately.
 
 **Exit criterion:** Humans and automation can determine archive contents, integrity, completeness, and the last operation outcome without manually inspecting the mirror.
+
+**Completed 2026-08-15:** Every archive-targeted backup, update, info, and
+verification attempt atomically replaces `reports/latest.json` and
+`reports/latest.txt`. Failed attempts update only those reports; manifest
+archive timestamps remain successful-state timestamps. `info` summarizes the
+manifest, source, refs, deferred-component statuses, bundle count, and last
+successful verification. `verify` checks bare-repository structure, source and
+manifest consistency, refs, and (by default) `git fsck --full` plus all present
+bundle snapshots. Successful checks record `last_verified_at` and mode in the
+manifest. `--quick` skips object/LFS/bundle work; `--full` is the default.
 
 ## Phase 4: Git LFS and Submodule Awareness
 
@@ -218,11 +228,11 @@ round-tripping. Source-identity failures retain the initiating `backup` or
 - [x] Mirror creation with multiple branches and lightweight/annotated tags.
 - [x] Idempotent update and fetching new commits/refs.
 - [x] Pruning deleted remote refs.
-- [ ] Full object verification.
+- [x] Full object verification.
 - [ ] Bundle creation and verification.
 - [ ] Offline restoration from a mirror and a bundle.
 - [x] Failed update preserving the prior usable archive.
-- [ ] CLI JSON output and exit codes.
+- [x] CLI JSON output and exit codes for current commands.
 - [ ] Conditional LFS archive and restore tests when Git LFS is installed.
 - [ ] Separation of network-dependent tests from the default suite.
 
