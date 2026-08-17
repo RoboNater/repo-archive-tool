@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import shutil
 from dataclasses import dataclass
@@ -29,6 +30,7 @@ class LfsArchiveResult:
 
     manifest: dict[str, object]
     component: ComponentResult
+    promotable: bool = True
 
 
 def detect_lfs(mirror_path: Path, runner: GitRunner) -> LfsDetection | CommandResult:
@@ -39,9 +41,6 @@ def detect_lfs(mirror_path: Path, runner: GitRunner) -> LfsDetection | CommandRe
         "rev-list",
         "--objects",
         "--all",
-        "--",
-        ".gitattributes",
-        ":(glob)**/.gitattributes",
         cwd=mirror_path,
     )
     if not objects.succeeded:
@@ -70,6 +69,18 @@ def archive_lfs(
     previous_mirror: Path | None = None,
 ) -> LfsArchiveResult:
     """Fetch and verify all LFS objects reachable from the staged mirror."""
+    copied_error = _copy_previous_store(previous_mirror, mirror_path)
+    if copied_error is not None:
+        return LfsArchiveResult(
+            {
+                "detected": None,
+                "status": "failed",
+                "reason": "storage-copy-failed",
+            },
+            ComponentResult("lfs", ComponentStatus.FAILED, copied_error),
+            promotable=False,
+        )
+
     detection = detect_lfs(mirror_path, runner)
     if isinstance(detection, CommandResult):
         return _partial(
@@ -89,9 +100,6 @@ def archive_lfs(
             ),
         )
 
-    copied_error = _copy_previous_store(previous_mirror, mirror_path)
-    if copied_error is not None:
-        return _partial(True, copied_error, reason="storage-copy-failed")
     if not enabled:
         return _partial(
             True,
@@ -258,10 +266,24 @@ def _copy_previous_store(previous_mirror: Path | None, mirror_path: Path) -> str
     if not source.is_dir():
         return None
     try:
-        shutil.copytree(source, mirror_path / "lfs", dirs_exist_ok=True)
+        shutil.copytree(
+            source,
+            mirror_path / "lfs",
+            copy_function=_link_or_copy,
+            dirs_exist_ok=True,
+        )
     except OSError as error:
         return f"Could not preserve the previous LFS object store: {error}"
     return None
+
+
+def _link_or_copy(source: str, destination: str) -> str:
+    """Hard-link immutable LFS content, falling back to a normal file copy."""
+    try:
+        os.link(source, destination)
+    except OSError:
+        return shutil.copy2(source, destination)
+    return destination
 
 
 def _partial(

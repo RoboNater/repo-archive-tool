@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import hashlib
+import shutil
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from repo_archive.git import CommandResult, GitRunner
-from repo_archive.lfs import LfsDetection, detect_lfs, verify_lfs_objects
+from repo_archive.lfs import (
+    LfsDetection,
+    _link_or_copy,
+    detect_lfs,
+    verify_lfs_objects,
+)
 from repo_archive.results import ComponentStatus
 
 
@@ -68,3 +74,21 @@ def test_verify_lfs_objects_reports_corrupt_content(tmp_path: Path) -> None:
 
     assert result.component.status is ComponentStatus.PARTIAL
     assert result.manifest["corrupt_objects"] == [oid]
+
+
+def test_lfs_staging_falls_back_to_copy_when_hard_linking_fails(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    source.write_bytes(b"lfs object")
+
+    with (
+        patch("repo_archive.lfs.os.link", side_effect=OSError("not supported")),
+        patch("repo_archive.lfs.shutil.copy2", wraps=shutil.copy2) as copy2,
+    ):
+        result = _link_or_copy(str(source), str(destination))
+
+    assert result == str(destination)
+    assert destination.read_bytes() == b"lfs object"
+    copy2.assert_called_once_with(str(source), str(destination))

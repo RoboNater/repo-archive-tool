@@ -29,10 +29,29 @@ def test_git_captures_a_successful_command(mock_run: Mock) -> None:
         cwd=Path("archive"),
         capture_output=True,
         check=False,
+        encoding="utf-8",
+        errors="replace",
+        input=None,
         shell=False,
         text=True,
         timeout=30,
     )
+
+
+@patch("repo_archive.git.subprocess.run")
+def test_git_supports_batched_input_and_replacement_decoding(mock_run: Mock) -> None:
+    mock_run.return_value = subprocess.CompletedProcess(
+        args=("git", "cat-file", "--batch-check"),
+        returncode=0,
+        stdout="tree-id tree\n",
+        stderr="",
+    )
+
+    result = GitRunner().git("cat-file", "--batch-check", input_text="main^{tree}\n")
+
+    assert result.stdout == "tree-id tree\n"
+    assert mock_run.call_args.kwargs["input"] == "main^{tree}\n"
+    assert mock_run.call_args.kwargs["errors"] == "replace"
 
 
 @patch("repo_archive.git.subprocess.run")

@@ -45,10 +45,12 @@ def test_parser_accepts_backup_arguments() -> None:
 
 def test_parser_accepts_info_and_verification_modes() -> None:
     info = build_parser().parse_args(["info", "archive", "--json"])
+    update = build_parser().parse_args(["update", "archive", "--no-lfs"])
     quick = build_parser().parse_args(["verify", "archive", "--quick"])
     full = build_parser().parse_args(["verify", "archive", "--full"])
 
     assert info.command == "info"
+    assert update.no_lfs is True
     assert quick.quick is True
     assert full.full is True
 
@@ -158,3 +160,23 @@ def test_no_lfs_is_forwarded_without_a_deferred_warning(
     )
     emitted = json.loads(capsys.readouterr().out)
     assert emitted["warnings"] == []
+
+
+def test_update_forwards_no_lfs(tmp_path: Path, capsys: object) -> None:
+    archive_path = tmp_path / "archive"
+    result = OperationResult(
+        "update",
+        archive_path,
+        components=(ComponentResult("lfs", ComponentStatus.PARTIAL),),
+    )
+    with (
+        patch(
+            "sys.argv",
+            ["repo-archive", "update", str(archive_path), "--no-lfs", "--json"],
+        ),
+        patch("repo_archive.cli.update_archive", return_value=result) as update,
+    ):
+        assert main() == 3
+
+    update.assert_called_once_with(ArchiveLayout(archive_path), lfs_enabled=False)
+    assert json.loads(capsys.readouterr().out)["outcome"] == "partial"

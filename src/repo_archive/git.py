@@ -56,18 +56,32 @@ class GitRunner:
         *arguments: str,
         cwd: Path | str | None = None,
         check: bool = False,
+        input_text: str | None = None,
     ) -> CommandResult:
         """Run Git with *arguments* and return its captured result."""
-        return self._run(self.git_executable, arguments, cwd=cwd, check=check)
+        return self._run(
+            self.git_executable,
+            arguments,
+            cwd=cwd,
+            check=check,
+            input_text=input_text,
+        )
 
     def lfs(
         self,
         *arguments: str,
         cwd: Path | str | None = None,
         check: bool = False,
+        input_text: str | None = None,
     ) -> CommandResult:
         """Run Git LFS with *arguments* and return its captured result."""
-        return self._run(self.git_lfs_executable, arguments, cwd=cwd, check=check)
+        return self._run(
+            self.git_lfs_executable,
+            arguments,
+            cwd=cwd,
+            check=check,
+            input_text=input_text,
+        )
 
     def _run(
         self,
@@ -76,6 +90,7 @@ class GitRunner:
         *,
         cwd: Path | str | None,
         check: bool,
+        input_text: str | None,
     ) -> CommandResult:
         command = (executable, *arguments)
         try:
@@ -84,6 +99,9 @@ class GitRunner:
                 cwd=cwd,
                 capture_output=True,
                 check=False,
+                encoding="utf-8",
+                errors="replace",
+                input=input_text,
                 shell=False,
                 text=True,
                 timeout=self.timeout,

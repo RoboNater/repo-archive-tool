@@ -52,6 +52,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     update = subcommands.add_parser("update", help="safely refresh an archive")
     update.add_argument("archive_path", type=Path)
+    update.add_argument(
+        "--no-lfs",
+        action="store_true",
+        help="intentionally skip LFS object fetching (partial when LFS is detected)",
+    )
     update.add_argument("--json", action="store_true", dest="command_json")
     update.add_argument("--verbose", action="store_true", dest="command_verbose")
 
@@ -93,7 +98,10 @@ def main() -> int:
             )
             result = _add_deferred_option_warnings(result, arguments)
     elif arguments.command == "update":
-        result = update_archive(ArchiveLayout(arguments.archive_path))
+        result = update_archive(
+            ArchiveLayout(arguments.archive_path),
+            lfs_enabled=not arguments.no_lfs,
+        )
     elif arguments.command == "info":
         result = info_archive(ArchiveLayout(arguments.archive_path))
     elif arguments.command == "verify":

@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -14,7 +15,7 @@ from repo_archive.archive import (
     backup_archive,
     update_archive,
 )
-from repo_archive.git import GitRunner
+from repo_archive.git import CommandResult, GitRunner
 from repo_archive.inspection import info_archive, verify_archive
 from repo_archive.manifest import Manifest, load_manifest, write_json_atomic
 from repo_archive.remote import normalize_remote
@@ -31,6 +32,23 @@ def git(*arguments: str, cwd: Path | None = None) -> str:
         text=True,
     )
     return completed.stdout.strip()
+
+
+class DetectionFailureRunner(GitRunner):
+    """Use real Git except for the LFS attribute-history query."""
+
+    def git(
+        self,
+        *arguments: str,
+        cwd: Path | str | None = None,
+        check: bool = False,
+        input_text: str | None = None,
+    ) -> CommandResult:
+        if "rev-list" in arguments and "--objects" in arguments:
+            return CommandResult(
+                ("git", *arguments), 1, "", "simulated rev-list failure"
+            )
+        return super().git(*arguments, cwd=cwd, check=check, input_text=input_text)
 
 
 def create_remote(tmp_path: Path) -> tuple[Path, Path]:
@@ -226,6 +244,80 @@ def test_no_lfs_marks_historical_lfs_use_as_partial(tmp_path: Path) -> None:
     assert verification.outcome is Outcome.PARTIAL
 
 
+def test_nested_lfs_attributes_are_detected(tmp_path: Path) -> None:
+    remote, worktree = create_remote(tmp_path)
+    attributes = worktree / "assets" / ".gitattributes"
+    attributes.parent.mkdir()
+    attributes.write_text(
+        "*.bin filter=lfs diff=lfs merge=lfs -text\n", encoding="utf-8"
+    )
+    git("add", "assets/.gitattributes", cwd=worktree)
+    git("commit", "-m", "scope lfs to assets", cwd=worktree)
+    git("push", cwd=worktree)
+    layout = ArchiveLayout(tmp_path / "archives" / "project")
+
+    result = backup_archive(str(remote), layout, lfs_enabled=False)
+
+    assert result.outcome is Outcome.PARTIAL
+    assert load_manifest(layout.manifest_path).lfs["detected"] is True
+
+
+def test_non_utf8_attributes_do_not_escape_structured_results(tmp_path: Path) -> None:
+    remote, worktree = create_remote(tmp_path)
+    (worktree / ".gitattributes").write_bytes(
+        b"*.bin filter=lfs diff=lfs merge=lfs -text\n# invalid: \xff\n"
+    )
+    git("add", ".gitattributes", cwd=worktree)
+    git("commit", "-m", "add non-utf8 attributes", cwd=worktree)
+    git("push", cwd=worktree)
+    layout = ArchiveLayout(tmp_path / "archives" / "project")
+
+    result = backup_archive(str(remote), layout, lfs_enabled=False)
+
+    assert result.outcome is Outcome.PARTIAL
+    assert (layout.reports_path / "latest.json").is_file()
+
+
+def test_detection_failure_preserves_existing_lfs_store(tmp_path: Path) -> None:
+    remote, worktree = create_remote(tmp_path)
+    layout = ArchiveLayout(tmp_path / "archives" / "project")
+    assert backup_archive(str(remote), layout).outcome is Outcome.COMPLETE
+    archived_object = layout.mirror_path / "lfs" / "objects" / "existing"
+    archived_object.parent.mkdir(parents=True)
+    archived_object.write_bytes(b"preserve me")
+    (worktree / "README.md").write_text("new git state\n", encoding="utf-8")
+    git("commit", "-am", "new git state", cwd=worktree)
+    git("push", cwd=worktree)
+
+    result = update_archive(layout, runner=DetectionFailureRunner())
+
+    assert result.outcome is Outcome.PARTIAL
+    assert archived_object.read_bytes() == b"preserve me"
+    assert git("rev-parse", "main", cwd=layout.mirror_path) == git(
+        "rev-parse", "main", cwd=worktree
+    )
+
+
+def test_lfs_copy_failure_does_not_promote_staged_update(tmp_path: Path) -> None:
+    remote, worktree = create_remote(tmp_path)
+    layout = ArchiveLayout(tmp_path / "archives" / "project")
+    assert backup_archive(str(remote), layout).outcome is Outcome.COMPLETE
+    previous_head = git("rev-parse", "main", cwd=layout.mirror_path)
+    archived_object = layout.mirror_path / "lfs" / "objects" / "existing"
+    archived_object.parent.mkdir(parents=True)
+    archived_object.write_bytes(b"preserve me")
+    (worktree / "README.md").write_text("unpromoted state\n", encoding="utf-8")
+    git("commit", "-am", "unpromoted state", cwd=worktree)
+    git("push", cwd=worktree)
+
+    with patch("repo_archive.lfs.shutil.copytree", side_effect=OSError("disk full")):
+        result = update_archive(layout)
+
+    assert result.outcome is Outcome.FAILED
+    assert git("rev-parse", "main", cwd=layout.mirror_path) == previous_head
+    assert archived_object.read_bytes() == b"preserve me"
+
+
 def test_missing_git_lfs_tool_marks_detected_repository_partial(
     tmp_path: Path,
 ) -> None:
@@ -269,6 +361,15 @@ def test_submodules_are_recorded_and_reported_as_a_warning(tmp_path: Path) -> No
     )
     git("commit", "-m", "add submodule", cwd=worktree)
     git("push", cwd=worktree)
+    git("switch", "-c", "malformed-submodule", cwd=worktree)
+    (worktree / ".gitmodules").write_text(
+        '[submodule "incomplete"]\n\tpath = vendor/incomplete\n',
+        encoding="utf-8",
+    )
+    git("add", ".gitmodules", cwd=worktree)
+    git("commit", "-m", "leave an incomplete historical definition", cwd=worktree)
+    git("push", "-u", "origin", "malformed-submodule", cwd=worktree)
+    git("switch", "main", cwd=worktree)
     layout = ArchiveLayout(tmp_path / "archives" / "project")
 
     result = backup_archive(str(remote), layout)
@@ -282,6 +383,7 @@ def test_submodules_are_recorded_and_reported_as_a_warning(tmp_path: Path) -> No
     assert repository["url"] == "../library.git"
     assert pinned_commit in repository["commits"]
     assert "refs/heads/main" in repository["refs"]
+    assert manifest.submodules["inspection_warnings"]
     report = (layout.reports_path / "latest.txt").read_text(encoding="utf-8")
     assert "vendor/library -> ../library.git" in report
     assert pinned_commit in report
@@ -312,7 +414,7 @@ def test_lfs_objects_are_fetched_and_verified_when_available(tmp_path: Path) -> 
         for path in (layout.mirror_path / "lfs" / "objects").rglob("*")
         if path.is_file()
     }
-    skipped = backup_archive(str(remote), layout, lfs_enabled=False)
+    skipped = update_archive(layout, lfs_enabled=False)
     assert skipped.outcome is Outcome.PARTIAL
     assert archived_objects
     assert all((layout.mirror_path / path).is_file() for path in archived_objects)

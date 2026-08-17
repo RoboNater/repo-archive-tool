@@ -34,6 +34,13 @@ This is the working implementation plan for `repo-archive-tool`. Keep it aligned
   tree-bearing refs without requiring a worktree. Keep LFS storage inside
   `mirror.git/lfs`, and carry the previous store into staged updates before
   fetching and verification.
+- Scan the full reachable object-name list for nested historical
+  `.gitattributes`. Stage existing immutable LFS objects with same-volume hard
+  links and a normal-copy fallback; never promote a staged update when the
+  previous LFS store could not be preserved.
+- Batch submodule ref-to-tree resolution, inspect each unique tree once, and
+  cache parsed `.gitmodules` blobs. Preserve valid findings when historical
+  definitions are incomplete, reporting those entries as warnings.
 
 ## Target Project Structure
 
@@ -219,6 +226,17 @@ recursive child-repository archival as `complete-with-warnings`. Unit and local
 integration tests cover historical LFS detection, missing tooling, object
 hashing, real LFS transfer when installed, submodule parsing, manifest state,
 reports, and exit codes.
+
+**Review hardening 2026-08-16:** Nested `.gitattributes` paths are included in
+LFS detection, non-UTF-8 committed content is decoded safely, and staged
+updates preserve an existing LFS payload even when later detection fails. A
+failure to stage that payload now prevents promotion. Existing LFS files use
+hard links where supported to avoid duplicating large stores. Submodule
+inspection batches tree resolution, deduplicates identical trees and config
+blobs, retains valid definitions when another historical entry is incomplete,
+and distinguishes recoverable warnings from incomplete inspection. Both
+`backup` and `update` accept `--no-lfs`. Regression tests cover each of these
+review scenarios.
 
 ## Phase 5: Bundle Snapshots and Restore
 

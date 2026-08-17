@@ -87,7 +87,10 @@ def backup_archive(
 
 
 def update_archive(
-    layout: ArchiveLayout, *, runner: GitRunner | None = None
+    layout: ArchiveLayout,
+    *,
+    lfs_enabled: bool = True,
+    runner: GitRunner | None = None,
 ) -> OperationResult:
     """Safely refresh an archive using the source remote configured in its mirror."""
     runner = runner or GitRunner()
@@ -117,7 +120,7 @@ def update_archive(
         )
     return _record_result(
         layout,
-        _create_or_update(layout, remote, runner, "update", lfs_enabled=True),
+        _create_or_update(layout, remote, runner, "update", lfs_enabled=lfs_enabled),
     )
 
 
@@ -178,6 +181,23 @@ def _create_or_update(
             enabled=lfs_enabled,
             previous_mirror=layout.mirror_path if existing else None,
         )
+        if not lfs.promotable:
+            return OperationResult(
+                operation=operation,
+                archive_path=layout.path,
+                components=(
+                    ComponentResult("git mirror", ComponentStatus.COMPLETE, action),
+                    ComponentResult(
+                        "git refs", ComponentStatus.COMPLETE, _state_message(state)
+                    ),
+                    ComponentResult(
+                        "git integrity",
+                        ComponentStatus.COMPLETE,
+                        "Git fsck passed.",
+                    ),
+                    lfs.component,
+                ),
+            )
         submodules = inspect_submodules(staged_mirror, runner)
 
         _promote(staged_mirror, layout.mirror_path)
