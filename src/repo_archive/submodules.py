@@ -36,6 +36,15 @@ class TreeListing:
     warnings: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class TreeResolution:
+    """Unique trees resolved from refs plus any inspection diagnostics."""
+
+    refs_by_tree: dict[str, set[str]]
+    warnings: tuple[str, ...]
+    failures: tuple[str, ...]
+
+
 def inspect_submodules(mirror_path: Path, runner: GitRunner) -> SubmoduleArchiveResult:
     """Find submodule definitions and pinned commits across tree-bearing refs."""
     refs_result = runner.git("for-each-ref", "--format=%(refname)", cwd=mirror_path)
@@ -61,20 +70,42 @@ def inspect_submodules(mirror_path: Path, runner: GitRunner) -> SubmoduleArchive
             (),
             ("Could not resolve refs to trees for submodule inspection.",),
         )
-    tree_refs, resolution_warnings, resolution_failures = _group_refs_by_tree(
-        refs, resolved.stdout
-    )
+    resolution = _group_refs_by_tree(refs, resolved.stdout)
 
     found: dict[tuple[str, str], dict[str, set[str]]] = defaultdict(
         lambda: {"commits": set(), "refs": set()}
     )
     config_cache: dict[str, ParsedGitConfig | None] = {}
-    warnings = list(resolution_warnings)
-    failures = list(resolution_failures)
+    warnings = list(resolution.warnings)
+    failures = list(resolution.failures)
     sections_seen = 0
     inspected_refs = 0
 
-    for tree_oid, tree_ref_names in sorted(tree_refs.items()):
+    gitmodules_by_tree: dict[str, str] = {}
+    if resolution.refs_by_tree:
+        located = runner.git(
+            "cat-file",
+            "--batch-check=%(objectname) %(objecttype)",
+            cwd=mirror_path,
+            input_text="".join(
+                f"{tree_oid}:.gitmodules\n"
+                for tree_oid in sorted(resolution.refs_by_tree)
+            ),
+        )
+        if not located.succeeded:
+            failures.append("Could not locate .gitmodules blobs in archived trees.")
+        else:
+            gitmodules_by_tree, location_failures = _map_gitmodules_blobs(
+                tuple(sorted(resolution.refs_by_tree)), located.stdout
+            )
+            failures.extend(location_failures)
+            if not location_failures:
+                inspected_refs = sum(
+                    len(names) for names in resolution.refs_by_tree.values()
+                )
+
+    for tree_oid, gitmodules_oid in sorted(gitmodules_by_tree.items()):
+        tree_ref_names = resolution.refs_by_tree[tree_oid]
         listed = runner.git(
             "-c",
             "core.quotePath=false",
@@ -91,31 +122,26 @@ def inspect_submodules(mirror_path: Path, runner: GitRunner) -> SubmoduleArchive
                 f"{', '.join(sorted(tree_ref_names))}."
             )
             continue
-        inspected_refs += len(tree_ref_names)
         tree = _parse_tree(listed.stdout)
         warnings.extend(tree.warnings)
-        if tree.gitmodules_oid is None:
-            continue
 
-        if tree.gitmodules_oid not in config_cache:
+        if gitmodules_oid not in config_cache:
             configured = runner.git(
                 "config",
                 "--null",
                 "--blob",
-                tree.gitmodules_oid,
+                gitmodules_oid,
                 "--get-regexp",
                 r"^submodule\..*\.(path|url)$",
                 cwd=mirror_path,
             )
             if not configured.succeeded and configured.returncode != 1:
-                failures.append(
-                    f"Could not parse .gitmodules blob {tree.gitmodules_oid}."
-                )
-                config_cache[tree.gitmodules_oid] = None
+                failures.append(f"Could not parse .gitmodules blob {gitmodules_oid}.")
+                config_cache[gitmodules_oid] = None
             else:
-                config_cache[tree.gitmodules_oid] = _parse_git_config(configured.stdout)
+                config_cache[gitmodules_oid] = _parse_git_config(configured.stdout)
 
-        parsed = config_cache[tree.gitmodules_oid]
+        parsed = config_cache[gitmodules_oid]
         if parsed is None:
             continue
         sections_seen += parsed.sections_seen
@@ -140,12 +166,12 @@ def inspect_submodules(mirror_path: Path, runner: GitRunner) -> SubmoduleArchive
     )
 
 
-def _group_refs_by_tree(
-    refs: tuple[str, ...], output: str
-) -> tuple[dict[str, set[str]], tuple[str, ...], tuple[str, ...]]:
+def _group_refs_by_tree(refs: tuple[str, ...], output: str) -> TreeResolution:
     lines = output.splitlines()
     if len(lines) != len(refs):
-        return {}, (), ("Git returned an unexpected number of ref tree results.",)
+        return TreeResolution(
+            {}, (), ("Git returned an unexpected number of ref tree results.",)
+        )
     trees: dict[str, set[str]] = defaultdict(set)
     warnings: list[str] = []
     for ref, line in zip(refs, lines, strict=True):
@@ -154,7 +180,23 @@ def _group_refs_by_tree(
             trees[fields[0]].add(ref)
         elif not line.endswith(" missing"):
             warnings.append(f"Ref {ref} does not resolve to an inspectable tree.")
-    return trees, tuple(warnings), ()
+    return TreeResolution(trees, tuple(warnings), ())
+
+
+def _map_gitmodules_blobs(
+    tree_oids: tuple[str, ...], output: str
+) -> tuple[dict[str, str], tuple[str, ...]]:
+    lines = output.splitlines()
+    if len(lines) != len(tree_oids):
+        return {}, ("Git returned an unexpected number of .gitmodules results.",)
+    blobs: dict[str, str] = {}
+    for tree_oid, line in zip(tree_oids, lines, strict=True):
+        fields = line.split()
+        if len(fields) == 2 and fields[1] == "blob":
+            blobs[tree_oid] = fields[0]
+        elif not line.endswith(" missing"):
+            return {}, (f"Tree {tree_oid} has a non-blob .gitmodules entry.",)
+    return blobs, ()
 
 
 def _parse_tree(output: str) -> TreeListing:
@@ -185,8 +227,7 @@ def _parse_git_config(output: str) -> ParsedGitConfig:
             continue
         key, separator, value = record.partition("\n")
         if not separator:
-            warnings.append("Git returned malformed null-delimited config output.")
-            continue
+            value = ""
         section, dot, field = key.rpartition(".")
         field = field.lower()
         if not dot or field not in {"path", "url"}:
@@ -279,12 +320,11 @@ def _definition_summary(repositories: list[dict[str, object]]) -> str:
     definitions = []
     for item in repositories:
         commits = item["commits"]
-        commit_text = (
-            ", ".join(str(commit) for commit in commits)
-            if isinstance(commits, list)
-            else str(commits)
-        )
-        definitions.append(
-            f"{item['path']} -> {item['url']} at {commit_text or 'no gitlink'}"
-        )
+        if isinstance(commits, list) and len(commits) == 1:
+            commit_text = f"at {commits[0]}"
+        elif isinstance(commits, list) and commits:
+            commit_text = f"({len(commits)} pinned commits; e.g. {commits[0]})"
+        else:
+            commit_text = "at no gitlink"
+        definitions.append(f"{item['path']} -> {item['url']} {commit_text}")
     return "; ".join(definitions)

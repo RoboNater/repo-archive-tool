@@ -35,22 +35,24 @@ class LfsArchiveResult:
 
 def detect_lfs(mirror_path: Path, runner: GitRunner) -> LfsDetection | CommandResult:
     """Detect LFS attributes anywhere in history reachable from archived refs."""
-    objects = runner.git(
+    attribute_oids: set[str] = set()
+
+    def collect_attribute_oid(line: str) -> None:
+        oid, separator, path = line.partition(" ")
+        if separator and PurePosixPath(path).name == ".gitattributes":
+            attribute_oids.add(oid)
+
+    objects = runner.git_stream_stdout(
         "-c",
         "core.quotePath=false",
         "rev-list",
         "--objects",
         "--all",
         cwd=mirror_path,
+        on_line=collect_attribute_oid,
     )
     if not objects.succeeded:
         return objects
-
-    attribute_oids: set[str] = set()
-    for line in objects.stdout.splitlines():
-        oid, separator, path = line.partition(" ")
-        if separator and PurePosixPath(path).name == ".gitattributes":
-            attribute_oids.add(oid)
 
     for oid in sorted(attribute_oids):
         content = runner.git("cat-file", "blob", oid, cwd=mirror_path)

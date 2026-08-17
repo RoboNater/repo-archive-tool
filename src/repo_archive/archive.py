@@ -186,16 +186,35 @@ def _create_or_update(
                 operation=operation,
                 archive_path=layout.path,
                 components=(
-                    ComponentResult("git mirror", ComponentStatus.COMPLETE, action),
                     ComponentResult(
-                        "git refs", ComponentStatus.COMPLETE, _state_message(state)
+                        "git mirror",
+                        ComponentStatus.PARTIAL,
+                        f"{action} The staged mirror was not promoted; the existing "
+                        "archived mirror is unchanged.",
+                    ),
+                    ComponentResult(
+                        "git refs",
+                        ComponentStatus.PARTIAL,
+                        "Staged refs were enumerated but not published: "
+                        + _state_message(state),
                     ),
                     ComponentResult(
                         "git integrity",
-                        ComponentStatus.COMPLETE,
-                        "Git fsck passed.",
+                        ComponentStatus.PARTIAL,
+                        "The staged mirror passed Git fsck but was not promoted.",
                     ),
                     lfs.component,
+                    ComponentResult(
+                        "submodules",
+                        ComponentStatus.PARTIAL,
+                        "Submodule inspection was skipped because the staged mirror "
+                        "could not be promoted.",
+                    ),
+                    ComponentResult(
+                        "manifest",
+                        ComponentStatus.PARTIAL,
+                        "Manifest not updated; the previous manifest was retained.",
+                    ),
                 ),
             )
         submodules = inspect_submodules(staged_mirror, runner)

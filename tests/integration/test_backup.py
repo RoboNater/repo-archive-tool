@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import patch
 
@@ -37,18 +38,17 @@ def git(*arguments: str, cwd: Path | None = None) -> str:
 class DetectionFailureRunner(GitRunner):
     """Use real Git except for the LFS attribute-history query."""
 
-    def git(
+    def git_stream_stdout(
         self,
         *arguments: str,
         cwd: Path | str | None = None,
-        check: bool = False,
-        input_text: str | None = None,
+        on_line: Callable[[str], None],
     ) -> CommandResult:
         if "rev-list" in arguments and "--objects" in arguments:
             return CommandResult(
                 ("git", *arguments), 1, "", "simulated rev-list failure"
             )
-        return super().git(*arguments, cwd=cwd, check=check, input_text=input_text)
+        return super().git_stream_stdout(*arguments, cwd=cwd, on_line=on_line)
 
 
 def create_remote(tmp_path: Path) -> tuple[Path, Path]:
@@ -303,6 +303,7 @@ def test_lfs_copy_failure_does_not_promote_staged_update(tmp_path: Path) -> None
     layout = ArchiveLayout(tmp_path / "archives" / "project")
     assert backup_archive(str(remote), layout).outcome is Outcome.COMPLETE
     previous_head = git("rev-parse", "main", cwd=layout.mirror_path)
+    previous_manifest = layout.manifest_path.read_bytes()
     archived_object = layout.mirror_path / "lfs" / "objects" / "existing"
     archived_object.parent.mkdir(parents=True)
     archived_object.write_bytes(b"preserve me")
@@ -316,6 +317,16 @@ def test_lfs_copy_failure_does_not_promote_staged_update(tmp_path: Path) -> None
     assert result.outcome is Outcome.FAILED
     assert git("rev-parse", "main", cwd=layout.mirror_path) == previous_head
     assert archived_object.read_bytes() == b"preserve me"
+    assert layout.manifest_path.read_bytes() == previous_manifest
+    assert [component.name for component in result.components] == [
+        "git mirror",
+        "git refs",
+        "git integrity",
+        "lfs",
+        "submodules",
+        "manifest",
+    ]
+    assert all(component.status.value != "complete" for component in result.components)
 
 
 def test_missing_git_lfs_tool_marks_detected_repository_partial(

@@ -23,15 +23,24 @@ def command(stdout: str = "", stderr: str = "", returncode: int = 0) -> CommandR
 
 def test_detect_lfs_inspects_historical_attribute_blobs(tmp_path: Path) -> None:
     runner = Mock(spec=GitRunner)
-    runner.git.side_effect = [
-        command("a" * 40 + " old/.gitattributes\n" + "b" * 40 + " README\n"),
-        command("# comment\n*.bin filter=lfs diff=lfs merge=lfs -text\n"),
-    ]
+
+    def stream_objects(*args: str, **kwargs: object) -> CommandResult:
+        on_line = kwargs["on_line"]
+        assert callable(on_line)
+        on_line("a" * 40 + " old/.gitattributes")
+        on_line("b" * 40 + " README")
+        return command()
+
+    runner.git_stream_stdout.side_effect = stream_objects
+    runner.git.return_value = command(
+        "# comment\n*.bin filter=lfs diff=lfs merge=lfs -text\n"
+    )
 
     detection = detect_lfs(tmp_path, runner)
 
     assert detection == LfsDetection(detected=True, attribute_files=1)
     runner.git.assert_any_call("cat-file", "blob", "a" * 40, cwd=tmp_path)
+    assert runner.git_stream_stdout.call_count == 1
 
 
 def test_verify_lfs_objects_reports_missing_objects(tmp_path: Path) -> None:

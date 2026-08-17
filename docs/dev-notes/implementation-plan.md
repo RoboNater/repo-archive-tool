@@ -238,6 +238,19 @@ and distinguishes recoverable warnings from incomplete inspection. Both
 `backup` and `update` accept `--no-lfs`. Regression tests cover each of these
 review scenarios.
 
+**Follow-up review hardening 2026-08-17:** LFS object discovery streams the
+full reachable-object walk instead of buffering it in memory. Submodule
+inspection batch-checks each unique root tree for `.gitmodules` and performs a
+recursive tree walk only where that file exists; all archived refs remain in
+scope so dependencies reachable only from non-branch refs are not hidden.
+Human-readable submodule summaries bound historical commit details while the
+manifest retains the full list, and valueless config keys flow through the
+normal incomplete-definition warning. When an LFS storage-copy failure blocks
+promotion, reports retain their normal component shape and mark unpublished or
+skipped work as partial rather than complete. Focused regression tests cover
+the streaming runner, no-submodule fast path, bounded summaries, valueless
+keys, and non-promotion reporting.
+
 ## Phase 5: Bundle Snapshots and Restore
 
 - [ ] Implement `snapshot <archive-path>` using a temporary bundle path.

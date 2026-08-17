@@ -7,9 +7,11 @@ the installed Git executables instead of a Python implementation of Git.
 from __future__ import annotations
 
 import subprocess
-from collections.abc import Sequence
+import tempfile
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Thread
 
 from repo_archive.security import redact_sensitive_text
 
@@ -83,6 +85,26 @@ class GitRunner:
             input_text=input_text,
         )
 
+    def git_stream_stdout(
+        self,
+        *arguments: str,
+        cwd: Path | str | None = None,
+        on_line: Callable[[str], None],
+    ) -> CommandResult:
+        """Run Git while consuming stdout incrementally through *on_line*."""
+        command = (self.git_executable, *arguments)
+        try:
+            return self._run_streaming(command, cwd=cwd, on_line=on_line)
+        except FileNotFoundError:
+            return self._redact_result(
+                CommandResult(
+                    command=command,
+                    returncode=127,
+                    stdout="",
+                    stderr=f"Executable not found: {self.git_executable}",
+                )
+            )
+
     def _run(
         self,
         executable: str,
@@ -128,16 +150,74 @@ class GitRunner:
                 stderr=completed.stderr,
             )
 
-        result = CommandResult(
+        return self._finish_result(result, check=check)
+
+    def _run_streaming(
+        self,
+        command: tuple[str, ...],
+        *,
+        cwd: Path | str | None,
+        on_line: Callable[[str], None],
+    ) -> CommandResult:
+        reader_errors: list[BaseException] = []
+        with tempfile.TemporaryFile(
+            mode="w+t", encoding="utf-8", errors="replace"
+        ) as stderr_stream:
+            process = subprocess.Popen(
+                command,
+                cwd=cwd,
+                encoding="utf-8",
+                errors="replace",
+                shell=False,
+                stderr=stderr_stream,
+                stdout=subprocess.PIPE,
+                text=True,
+            )
+            assert process.stdout is not None
+
+            def consume_stdout() -> None:
+                try:
+                    with process.stdout:
+                        for line in process.stdout:
+                            on_line(line.removesuffix("\n").removesuffix("\r"))
+                except BaseException as error:
+                    reader_errors.append(error)
+                    process.kill()
+
+            reader = Thread(target=consume_stdout, daemon=True)
+            reader.start()
+            timed_out = False
+            try:
+                returncode = process.wait(timeout=self.timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                process.kill()
+                returncode = process.wait()
+            reader.join()
+            stderr_stream.seek(0)
+            stderr = stderr_stream.read()
+
+        if reader_errors:
+            raise reader_errors[0]
+        if timed_out:
+            returncode = 124
+            stderr = stderr or "Command timed out."
+        return self._redact_result(CommandResult(command, returncode, "", stderr))
+
+    def _finish_result(self, result: CommandResult, *, check: bool) -> CommandResult:
+        result = self._redact_result(result)
+        if check and not result.succeeded:
+            raise CommandExecutionError(result)
+        return result
+
+    @staticmethod
+    def _redact_result(result: CommandResult) -> CommandResult:
+        return CommandResult(
             command=tuple(redact_sensitive_text(part) for part in result.command),
             returncode=result.returncode,
             stdout=redact_sensitive_text(result.stdout),
             stderr=redact_sensitive_text(result.stderr),
         )
-
-        if check and not result.succeeded:
-            raise CommandExecutionError(result)
-        return result
 
 
 def _as_text(value: str | bytes | None) -> str:

@@ -3,12 +3,27 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
 
 from repo_archive.git import CommandExecutionError, GitRunner
+
+
+def test_git_streams_stdout_without_retaining_it() -> None:
+    lines: list[str] = []
+
+    result = GitRunner(git_executable=sys.executable).git_stream_stdout(
+        "-c",
+        "print('first'); print('second')",
+        on_line=lines.append,
+    )
+
+    assert result.succeeded
+    assert result.stdout == ""
+    assert lines == ["first", "second"]
 
 
 @patch("repo_archive.git.subprocess.run")
