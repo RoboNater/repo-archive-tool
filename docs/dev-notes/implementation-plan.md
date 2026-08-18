@@ -266,6 +266,17 @@ is redacted before callbacks receive it. Tests include an external-object
 gitlink, mixed per-tree discovery outcomes, shared summary formatting, and
 streamed-output redaction.
 
+**Fourth review hardening 2026-08-18:** Credential redaction now bypasses its
+regular-expression passes when the input contains none of the characters that
+can introduce a supported secret form, keeping streamed reachable-object walks
+fast without weakening the callback's redaction guarantee. Path-limited
+submodule lookup still starts one `ls-tree` process per unique tree containing
+`.gitmodules`, and very large declared-path sets remain subject to the Windows
+command-line length limit. A future batching replacement must preserve gitlink
+OIDs even when their target commits are correctly absent from the superproject;
+the tested `cat-file --batch` approach does not, so this non-blocking residual
+scalability work is deferred rather than trading away archive correctness.
+
 ## Phase 5: Bundle Snapshots and Restore
 
 - [ ] Implement `snapshot <archive-path>` using a temporary bundle path.
