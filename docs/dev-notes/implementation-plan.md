@@ -14,8 +14,8 @@ This is the working implementation plan for `repo-archive-tool`. Keep it aligned
 - [x] Core archive MVP implemented.
 - [x] LFS-aware archival implemented.
 - [x] Submodule awareness and incompleteness reporting implemented.
-- [ ] Bundle snapshots implemented.
-- [ ] Usage and project documentation completed.
+- [ ] Current-capability usage and project documentation completed.
+- [ ] Bundle snapshots and offline restore implemented.
 
 ## Implementation Decisions
 
@@ -42,6 +42,10 @@ This is the working implementation plan for `repo-archive-tool`. Keep it aligned
   configuration blobs, and use path-limited tree queries for only the declared
   submodule paths. Preserve valid findings when historical definitions are
   incomplete, reporting those entries as warnings.
+- Publish user documentation for the currently usable feature set before
+  snapshot and restore work so early adopters can provide feedback. After that
+  baseline is published, every implementation phase must update affected user
+  documentation and automated tests in the same change.
 
 ## Target Project Structure
 
@@ -277,23 +281,112 @@ OIDs even when their target commits are correctly absent from the superproject;
 the tested `cat-file --batch` approach does not, so this non-blocking residual
 scalability work is deferred rather than trading away archive correctness.
 
-## Phase 5: Bundle Snapshots and Restore
+## Phase 5: Current-Capability Documentation and User Feedback
 
+Document the useful feature set that exists now rather than waiting for restore
+support. Documentation in this phase must describe shipped behavior precisely
+and identify deferred commands and options explicitly.
+
+**Reprioritized 2026-08-18:** Current-capability documentation moved ahead of
+snapshot and restore implementation so the working archive, verification, LFS,
+and submodule-awareness features can receive early user feedback.
+
+### Short usage guide
+
+- [ ] Create `docs/usage.md` with a task-oriented quick start for the currently
+  implemented workflow:
+
+  ```bash
+  repo-archive backup https://github.com/OWNER/REPO.git --root ./archives
+  repo-archive info <archive-path>
+  repo-archive verify <archive-path>
+  repo-archive update <archive-path>
+  ```
+
+- [ ] Explain installation with uv, archive-path discovery, repeatable updates,
+  quick and full verification, JSON automation, verbose output, reports, and
+  exit codes.
+- [ ] Explain current LFS archival and verification behavior, `--no-lfs`
+  partial archives, submodule detection without recursive archival, and
+  credential-handling expectations.
+- [ ] Clearly label bundle creation, restore, recursive submodule archival, and
+  provider metadata export as deferred. Document that accepted `--bundle` and
+  `--metadata` requests currently report deferred work rather than performing
+  those operations.
+
+### Project README
+
+- [ ] Add the project purpose, current implementation status, and an invitation
+  to provide early feedback through GitHub issues.
+- [ ] Document Git, conditional Git LFS, Python, and uv requirements.
+- [ ] Provide installation examples such as `uv tool install .` and the
+  uv-managed contributor setup.
+- [ ] Include a concise current-command quick start for `backup`, `update`,
+  `info`, and `verify`.
+- [ ] Explain archive layout, manifests, reports, completeness outcomes, and
+  important implemented options.
+- [ ] Document current LFS, submodule, metadata, bundle, restore, and
+  credential-handling limitations without implying deferred behavior exists.
+- [ ] Include uv-based development, lint, formatting, and test commands.
+- [ ] Link the specification, roadmap, usage guide, MIT license, and feedback
+  channel.
+
+**Exit criterion:** A new user can install the tool, create or update an
+archive, inspect and verify it, understand completeness and current
+limitations, and provide feedback without reading source code or the full
+specification.
+
+## Phase 6: Bundle Snapshots and Restore
+
+Resolve the snapshot and restore contracts before implementation, then deliver
+them as separately reviewable snapshot and restore changes with tests and user
+documentation updated alongside each change.
+
+- [ ] Decide and document whether an immutable snapshot owns a snapshot-specific
+  LFS payload or relies on the archive set's shared LFS store. State the
+  resulting point-in-time and portability guarantees explicitly.
+- [ ] Define the snapshot record format, including path, creation timestamp,
+  verification outcome, included refs, and LFS relationship.
 - [ ] Implement `snapshot <archive-path>` using a temporary bundle path.
-- [ ] Create bundles containing all intended refs and verify them before atomic publication under a unique UTC timestamp.
-- [ ] Record snapshot paths and verification outcomes.
-- [ ] State in all relevant output that ordinary Git bundles do not contain LFS objects.
-- [ ] Implement `restore <archive-path> <destination>` as an offline normal clone from `mirror.git`.
-- [ ] Seed restored repositories with archived LFS objects and perform the supported local LFS checkout flow.
+- [ ] Create bundles containing all intended refs and verify them before atomic
+  publication under a unique UTC timestamp.
+- [ ] Make the existing `backup --bundle` option create a verified snapshot
+  after a successful archive update, using the same snapshot implementation.
+- [ ] Record snapshot paths and verification outcomes without weakening atomic
+  manifest and report updates.
+- [ ] State in all relevant output and user documentation that ordinary Git
+  bundles do not contain LFS objects.
+- [ ] Define restore CLI modes before coding, including a normal working clone,
+  selection of a bundle snapshot, and a recovered mirror suitable for
+  `git push --mirror`.
+- [ ] Implement `restore <archive-path> <destination>` as an offline normal
+  clone from `mirror.git`.
+- [ ] Seed restored repositories with archived LFS objects and perform the
+  supported local LFS checkout flow without requiring the source remote.
 - [ ] Support restoration from a selected bundle.
-- [ ] Support producing a recovered mirror suitable for `git push --mirror` to a replacement remote.
-- [ ] Refuse unsafe destination overwrites unless a future explicit and well-tested policy is added.
+- [ ] Support producing a recovered mirror suitable for `git push --mirror` to
+  a replacement remote.
+- [ ] Refuse existing or unsafe destination overwrites. Build restores in a
+  temporary sibling and publish the destination only after clone, LFS seeding,
+  checkout, and validation succeed; clean up failed staging safely.
+- [ ] Add unit and integration coverage for bundle creation, verification,
+  atomic publication, destination safety, offline mirror and bundle restores,
+  recovered mirrors, and conditional LFS restoration.
+- [ ] Update `README.md` and `docs/usage.md` in the same changes with the final
+  snapshot and restore syntax, guarantees, examples, and limitations.
 
-**Exit criterion:** A disconnected archive can produce a normal working clone, an LFS-aware checkout where applicable, and a mirror that can be republished.
+**Exit criterion:** A disconnected archive can produce a verified bundle, a
+normal working clone, an LFS-aware checkout where applicable, and a mirror that
+can be republished; the behavior is covered by automated tests and accurately
+documented.
 
-## Phase 6: Test the Complete Lifecycle
+## Phase 7: Complete Lifecycle Validation and MVP Readiness
 
-### Unit tests
+Treat this phase as an acceptance audit, not the point where testing or
+documentation begins. Feature tests and documentation belong in the phase that
+introduces each behavior.
+
+### Existing coverage
 
 - [x] Remote URL normalization and archive naming.
 - [x] Manifest serialization and schema behavior.
@@ -303,56 +396,36 @@ scalability work is deferred rather than trading away archive correctness.
 - [x] LFS detection.
 - [x] `.gitmodules` parsing.
 - [x] JSON result stability.
-
-### Integration tests
-
 - [x] Mirror creation with multiple branches and lightweight/annotated tags.
 - [x] Idempotent update and fetching new commits/refs.
 - [x] Pruning deleted remote refs.
 - [x] Full object verification.
-- [ ] Bundle creation and verification.
-- [ ] Offline restoration from a mirror and a bundle.
 - [x] Failed update preserving the prior usable archive.
 - [x] CLI JSON output and exit codes for current commands.
-- [ ] Conditional LFS archive and restore tests when Git LFS is installed.
-- [ ] Separation of network-dependent tests from the default suite.
 
-**Exit criterion:** Automated tests demonstrate the required create, update, prune, verify, snapshot, and restore lifecycle on supported operating systems.
+### Final acceptance work
 
-## Phase 7: Usage Guide and README
+- [ ] Confirm automated coverage for bundle creation and verification.
+- [ ] Confirm offline restoration from both a mirror and a selected bundle.
+- [ ] Confirm recovered-mirror behavior suitable for `git push --mirror`.
+- [ ] Confirm conditional LFS archive and restore tests run when Git LFS is
+  installed and skip clearly otherwise.
+- [ ] Keep network-dependent tests separate from the default suite.
+- [ ] Exercise create -> update -> verify -> snapshot -> offline restore in one
+  complete local integration workflow.
+- [ ] Validate all README and usage examples against the installed CLI from a
+  clean checkout and reconcile any stale behavior or limitations.
 
-### Short usage guide
-
-- [ ] Create `docs/usage.md` with a task-oriented quick start:
-
-  ```bash
-  repo-archive backup https://github.com/OWNER/REPO.git --root ./archives
-  repo-archive info ./archives/github.com/OWNER/REPO
-  repo-archive verify ./archives/github.com/OWNER/REPO
-  repo-archive snapshot ./archives/github.com/OWNER/REPO
-  repo-archive restore ./archives/github.com/OWNER/REPO ./restored-repo
-  ```
-
-- [ ] Explain installation with uv, updating, JSON automation, exit codes, offline LFS restore, bundle limitations, submodule warnings, and mirror republishing.
-
-### Project README
-
-- [ ] Add the project purpose and implementation status.
-- [ ] Document Git, conditional Git LFS, Python, and uv requirements.
-- [ ] Provide installation examples such as `uv tool install .` and the uv-managed contributor setup.
-- [ ] Include a concise five-command quick start.
-- [ ] Explain archive layout and completeness outcomes.
-- [ ] Summarize commands and important options.
-- [ ] Provide restore and disaster-recovery examples.
-- [ ] Document LFS, submodule, metadata, and credential-handling limitations.
-- [ ] Include uv-based development, lint, formatting, and test commands.
-- [ ] Link the specification, roadmap, usage guide, and MIT license.
-
-**Exit criterion:** A new user can install, archive, inspect, verify, snapshot, and restore a repository without reading source code or the full specification.
+**Exit criterion:** Automated tests and verified documentation demonstrate the
+required create, update, prune, verify, snapshot, and restore lifecycle on
+supported operating systems.
 
 ## Post-MVP Phases
 
-These are specified follow-on capabilities and must not compromise the host-independent core.
+These are specified follow-on capabilities and must not compromise the
+host-independent core. Each phase includes its automated coverage and updates
+to `README.md` and `docs/usage.md`; documentation is part of the feature, not a
+later cleanup phase.
 
 ### Recursive submodule archival
 
@@ -360,6 +433,10 @@ These are specified follow-on capabilities and must not compromise the host-inde
 - [ ] Resolve relative submodule URLs safely.
 - [ ] Map parent paths and pinned commits to separate child archive sets.
 - [ ] Aggregate completeness across the archive graph.
+- [ ] Add unit and integration coverage for recursive discovery, URL
+  resolution, child failures, and aggregate completeness.
+- [ ] Update user documentation with recursive-mode syntax, archive layout,
+  completeness behavior, and limitations.
 
 ### GitHub metadata exporter
 
@@ -368,6 +445,10 @@ These are specified follow-on capabilities and must not compromise the host-inde
 - [ ] Export inspectable JSON for repository data, issues/comments, pull requests/reviews/comments, releases, labels, and milestones.
 - [ ] Record permissions, pagination, unavailable data, and per-resource completeness explicitly.
 - [ ] Later add Actions artifacts, settings, discussions, Projects, and other accessible resources.
+- [ ] Add deterministic exporter tests and keep live-network coverage separate
+  from the default suite.
+- [ ] Update user documentation with authentication, permissions, exported
+  resources, completeness guarantees, and restore limitations.
 
 ### Multi-repository operation
 
@@ -375,6 +456,10 @@ These are specified follow-on capabilities and must not compromise the host-inde
 - [ ] Add batch backup/update and per-repository result summaries.
 - [ ] Add snapshot retention policies.
 - [ ] Provide scheduler-friendly, noninteractive operation.
+- [ ] Add unit and integration coverage for configuration validation, partial
+  batch failures, retention, and noninteractive operation.
+- [ ] Update user documentation with configuration examples, automation,
+  retention behavior, aggregate exit status, and operational limitations.
 
 ## MVP Acceptance Gate
 
@@ -390,6 +475,8 @@ The MVP is complete only when all specification acceptance criteria are represen
 8. LFS or submodule incompleteness is never silent.
 9. The mirror remains usable through ordinary Git commands.
 10. Integration tests prove create -> update -> verify -> snapshot -> offline restore behavior.
+11. The README and usage guide accurately document all shipped commands,
+    completeness guarantees, external dependencies, and known limitations.
 
 ## Plan Maintenance
 
@@ -400,3 +487,7 @@ Whenever implementation work changes project state, update this file in the same
 - Add newly discovered work or risks instead of leaving them implicit.
 - Update the review date when the plan is substantively checked.
 - Keep README and usage-guide tasks synchronized with actual CLI behavior.
+- Add or update affected automated tests and user documentation in the same
+  phase and change that introduces or modifies behavior.
+- Describe only shipped behavior as available; label accepted-but-deferred
+  options and future commands explicitly.
