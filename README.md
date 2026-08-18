@@ -3,12 +3,16 @@
 `repo-archive-tool` is a command-line utility for creating and maintaining
 locally restorable archives of remote Git repositories.
 
-The project is in its bootstrap phase. The command currently exposes only its
-help text; archive operations will be added in the core MVP.
+The project currently supports safe staged mirror backup and update, archive
+information and verification, Git LFS detection/fetch/verification, and
+submodule-awareness reporting. Bundle snapshots and offline restore are the
+next planned core capabilities.
 
 ## Contributor setup
 
 Requirements: Python 3.11 or newer, [uv](https://docs.astral.sh/uv/), and Git.
+Git LFS is also required to produce complete archives of repositories that use
+LFS.
 
 ```powershell
 uv sync --dev

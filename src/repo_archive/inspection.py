@@ -13,6 +13,7 @@ from repo_archive.archive import (
     _state_message,
 )
 from repo_archive.git import CommandResult, GitRunner
+from repo_archive.lfs import verify_lfs_archive
 from repo_archive.manifest import Manifest, load_manifest, write_json_atomic
 from repo_archive.remote import normalize_remote
 from repo_archive.reporting import write_latest_reports
@@ -22,6 +23,7 @@ from repo_archive.results import (
     ErrorKind,
     OperationResult,
 )
+from repo_archive.submodules import summarize_submodule_definitions
 
 
 def info_archive(
@@ -80,6 +82,7 @@ def verify_archive(
     components.append(
         ComponentResult("manifest", ComponentStatus.COMPLETE, "Manifest loaded.")
     )
+    components.append(_status_component("submodules", manifest.submodules))
     bare = runner.git("rev-parse", "--is-bare-repository", cwd=layout.mirror_path)
     if not bare.succeeded:
         components.append(
@@ -121,7 +124,7 @@ def verify_archive(
                 "git integrity", fsck, ErrorKind.VERIFICATION, "Git fsck passed."
             )
         )
-        components.append(_status_component("lfs", manifest.lfs))
+        components.append(_lfs_verification_component(layout, manifest, runner))
         components.extend(_verify_bundles(layout, runner))
 
     result = OperationResult("verify", layout.path, components=tuple(components))
@@ -148,10 +151,43 @@ def _archive_component(manifest: Manifest) -> ComponentResult:
 
 def _status_component(name: str, value: dict[str, object]) -> ComponentResult:
     status = str(value.get("status", "not-run"))
-    component_status = (
-        ComponentStatus.PARTIAL if status == "partial" else ComponentStatus.COMPLETE
-    )
-    return ComponentResult(name, component_status, f"Status: {status}.")
+    if status == "partial":
+        component_status = ComponentStatus.PARTIAL
+    elif status in {"not-archived", "complete-with-warnings"}:
+        component_status = ComponentStatus.WARNING
+    else:
+        component_status = ComponentStatus.COMPLETE
+    detail = f"Status: {status}."
+    if name == "lfs" and value.get("detected"):
+        count = value.get("expected_object_count")
+        detail += " Git LFS detected"
+        detail += f"; {count} expected objects." if count is not None else "."
+    if name == "submodules" and value.get("detected"):
+        repositories = value.get("repositories", [])
+        count = len(repositories) if isinstance(repositories, list) else 0
+        detail += f" {count} definition(s); repositories are not recursively archived."
+        summary = summarize_submodule_definitions(repositories)
+        if summary:
+            detail += f" {summary}."
+    return ComponentResult(name, component_status, detail)
+
+
+def _lfs_verification_component(
+    layout: ArchiveLayout, manifest: Manifest, runner: GitRunner
+) -> ComponentResult:
+    verified = verify_lfs_archive(layout.mirror_path, runner)
+    if (
+        manifest.lfs.get("status") == "partial"
+        and verified.status == ComponentStatus.COMPLETE
+    ):
+        return ComponentResult(
+            "lfs",
+            ComponentStatus.PARTIAL,
+            (verified.message or "Git LFS verification passed.")
+            + " The manifest still records an intentionally or previously partial LFS "
+            "archive; run backup or update with LFS enabled.",
+        )
+    return verified
 
 
 def _metadata_component(manifest: Manifest) -> ComponentResult:

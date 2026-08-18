@@ -14,6 +14,8 @@ _AUTHORIZATION = re.compile(r"(?im)^(authorization:\s*)(.+)$")
 
 def redact_sensitive_text(value: str) -> str:
     """Remove credentials, tokens, and authorization values from *value*."""
+    if "@" not in value and "=" not in value and ":" not in value:
+        return value
     value = _URL_CREDENTIALS.sub(r"\g<scheme>***@", value)
     value = _TOKEN_ASSIGNMENT.sub(r"\g<name>=***", value)
     return _AUTHORIZATION.sub(r"\g<1>***", value)

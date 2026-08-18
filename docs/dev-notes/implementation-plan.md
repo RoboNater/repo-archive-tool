@@ -1,7 +1,7 @@
 # repo-archive-tool Implementation Plan
 
 **Status:** In progress
-**Last reviewed:** 2026-08-16
+**Last reviewed:** 2026-08-18
 **Governing specification:** [`repo-archive-tool-spec.md`](../../repo-archive-tool-spec.md)
 
 This is the working implementation plan for `repo-archive-tool`. Keep it aligned with the repository as design decisions are made and phases are completed. The specification defines product requirements; this document records the intended implementation sequence and current project state.
@@ -12,7 +12,8 @@ This is the working implementation plan for `repo-archive-tool`. Keep it aligned
 - [x] MIT license selected.
 - [x] Python project and development tooling bootstrapped.
 - [x] Core archive MVP implemented.
-- [ ] LFS-aware archival implemented.
+- [x] LFS-aware archival implemented.
+- [x] Submodule awareness and incompleteness reporting implemented.
 - [ ] Bundle snapshots implemented.
 - [ ] Usage and project documentation completed.
 
@@ -29,6 +30,18 @@ This is the working implementation plan for `repo-archive-tool`. Keep it aligned
 - Preserve remote URL authority (including IPv6 and non-default ports) separately
   from filesystem-safe archive-path components. Archive paths include a stable
   identity digest unless an explicit `--name` override is supplied.
+- Detect LFS attributes and submodule definitions across all archived,
+  tree-bearing refs without requiring a worktree. Keep LFS storage inside
+  `mirror.git/lfs`, and carry the previous store into staged updates before
+  fetching and verification.
+- Scan the full reachable object-name list for nested historical
+  `.gitattributes`. Stage existing immutable LFS objects with same-volume hard
+  links and a normal-copy fallback; never promote a staged update when the
+  previous LFS store could not be preserved.
+- Batch submodule ref-to-tree and root `.gitmodules` resolution, cache parsed
+  configuration blobs, and use path-limited tree queries for only the declared
+  submodule paths. Preserve valid findings when historical definitions are
+  incomplete, reporting those entries as warnings.
 
 ## Target Project Structure
 
@@ -139,9 +152,10 @@ mirror before publication; existing mirrors are locally cloned, refreshed with
 `remote update --prune`, validated with `git fsck --full`, and then promoted
 with rollback protection. `update` follows the same path from the configured
 `origin`. Both operations persist current source and Git manifest fields.
-The future-facing LFS, bundle, metadata, and expanded-diagnostics flags are
-accepted explicitly and report that their requested work is deferred rather
-than silently being ignored. Windows read-only Git objects are made writable
+The future-facing bundle, metadata, and expanded-diagnostics flags are accepted
+explicitly and report that their requested work is deferred rather than
+silently being ignored; LFS option behavior is implemented in Phase 4. Windows
+read-only Git objects are made writable
 only while removing the retired promoted mirror using Python 3.11-compatible
 `shutil.rmtree(..., onerror=...)` behavior. Existing archives reject a
 different requested source before staging, preventing a reused `--name` from
@@ -179,24 +193,89 @@ archive timestamps remain successful-state timestamps. `info` summarizes the
 manifest, source, refs, deferred-component statuses, bundle count, and last
 successful verification. `verify` checks bare-repository structure, source and
 manifest consistency, refs, and (by default) `git fsck --full` plus all present
-bundle snapshots. Successful checks record `last_verified_at` and mode in the
+bundle snapshots and current LFS completeness. Successful checks record
+`last_verified_at` and mode in the
 manifest. The CLI rewrites reports after applying command-level deferred-work
 warnings so persisted reports exactly match the emitted result. `--quick` skips
 object/LFS/bundle work; `--full` is the default.
 
 ## Phase 4: Git LFS and Submodule Awareness
 
-- [ ] Detect LFS use by inspecting tracked `.gitattributes` content across archived refs without requiring a worktree.
-- [ ] Detect whether `git-lfs` is installed.
-- [ ] Run the equivalent of `git lfs fetch --all` when LFS is detected and not explicitly disabled.
-- [ ] Verify expected LFS pointers and locally archived objects using installed Git LFS capabilities.
-- [ ] Mark missing tooling or objects as `partial` rather than silently succeeding.
-- [ ] Treat `--no-lfs` as an intentional partial archive when LFS is present.
-- [ ] Find and parse `.gitmodules` across relevant refs without requiring a worktree.
-- [ ] Record submodule paths, URLs, and referenced commits in the manifest/report.
-- [ ] Warn that the initial release does not recursively archive submodule repositories.
+- [x] Detect LFS use by inspecting tracked `.gitattributes` content across archived refs without requiring a worktree.
+- [x] Detect whether `git-lfs` is installed.
+- [x] Run the equivalent of `git lfs fetch --all` when LFS is detected and not explicitly disabled.
+- [x] Verify expected LFS pointers and locally archived objects using installed Git LFS capabilities.
+- [x] Mark missing tooling or objects as `partial` rather than silently succeeding.
+- [x] Treat `--no-lfs` as an intentional partial archive when LFS is present.
+- [x] Find and parse `.gitmodules` across relevant refs without requiring a worktree.
+- [x] Record submodule paths, URLs, and referenced commits in the manifest/report.
+- [x] Warn that the initial release does not recursively archive submodule repositories.
 
 **Exit criterion:** LFS and submodule incompleteness is detected, recorded, surfaced to users, and reflected in exit codes.
+
+**Completed 2026-08-16:** Backup and update inspect historical
+`.gitattributes` blobs reachable from archived refs, preserve the prior
+archive-local LFS store during staged refreshes, run `git lfs fetch --all`, and
+enumerate and SHA-256 verify every object reported by `git lfs ls-files --all`.
+Missing tooling, fetch/enumeration failures, missing or corrupt objects, and
+intentional `--no-lfs` operation produce a persisted `partial` result and exit
+code 3. Full verification rechecks LFS objects without fetching and retains an
+intentional partial status until a successful LFS-enabled backup or update.
+Submodule discovery reads `.gitmodules` and gitlinks from each tree-bearing ref,
+records paths, redacted URLs, commits, and refs, and reports the lack of
+recursive child-repository archival as `complete-with-warnings`. Unit and local
+integration tests cover historical LFS detection, missing tooling, object
+hashing, real LFS transfer when installed, submodule parsing, manifest state,
+reports, and exit codes.
+
+**Review hardening 2026-08-16:** Nested `.gitattributes` paths are included in
+LFS detection, non-UTF-8 committed content is decoded safely, and staged
+updates preserve an existing LFS payload even when later detection fails. A
+failure to stage that payload now prevents promotion. Existing LFS files use
+hard links where supported to avoid duplicating large stores. Submodule
+inspection batches tree resolution, deduplicates identical trees and config
+blobs, retains valid definitions when another historical entry is incomplete,
+and distinguishes recoverable warnings from incomplete inspection. Both
+`backup` and `update` accept `--no-lfs`. Regression tests cover each of these
+review scenarios.
+
+**Follow-up review hardening 2026-08-17:** LFS object discovery streams the
+full reachable-object walk instead of buffering it in memory. Submodule
+inspection batch-checks each unique root tree for `.gitmodules` and limits
+gitlink inspection to paths declared by the parsed configuration; all archived
+refs remain in scope so dependencies reachable only from non-branch refs are
+not hidden.
+Human-readable submodule summaries bound historical commit details while the
+manifest retains the full list, and valueless config keys flow through the
+normal incomplete-definition warning. When an LFS storage-copy failure blocks
+promotion, reports retain their normal component shape and mark unpublished or
+skipped work as partial rather than complete. Focused regression tests cover
+the streaming runner, no-submodule fast path, bounded summaries, valueless
+keys, and non-promotion reporting.
+
+**Third review hardening 2026-08-18:** Backup, info, and verify share the same
+bounded human-readable submodule summary while manifests retain complete
+commit histories. Submodule gitlinks are read with path-limited `ls-tree`
+queries rather than full recursive listings. A proposed `cat-file --batch`
+lookup was not used because Git reports normal external gitlink targets as
+missing when their commit objects are absent from the superproject; `ls-tree`
+reads the pinned OIDs directly from the tree without requiring those objects.
+Per-tree failures no longer discard successful discovery or inflate
+`refs_inspected`, dead tree-listing state was removed, and streamed Git stdout
+is redacted before callbacks receive it. Tests include an external-object
+gitlink, mixed per-tree discovery outcomes, shared summary formatting, and
+streamed-output redaction.
+
+**Fourth review hardening 2026-08-18:** Credential redaction now bypasses its
+regular-expression passes when the input contains none of the characters that
+can introduce a supported secret form, keeping streamed reachable-object walks
+fast without weakening the callback's redaction guarantee. Path-limited
+submodule lookup still starts one `ls-tree` process per unique tree containing
+`.gitmodules`, and very large declared-path sets remain subject to the Windows
+command-line length limit. A future batching replacement must preserve gitlink
+OIDs even when their target commits are correctly absent from the superproject;
+the tested `cat-file --batch` approach does not, so this non-blocking residual
+scalability work is deferred rather than trading away archive correctness.
 
 ## Phase 5: Bundle Snapshots and Restore
 
@@ -216,14 +295,14 @@ object/LFS/bundle work; `--full` is the default.
 
 ### Unit tests
 
-- [ ] Remote URL normalization and archive naming.
-- [ ] Manifest serialization and schema behavior.
-- [ ] Credential redaction.
-- [ ] Git/Git LFS command construction.
-- [ ] Status aggregation and exit-code mapping.
-- [ ] LFS detection.
-- [ ] `.gitmodules` parsing.
-- [ ] JSON result stability.
+- [x] Remote URL normalization and archive naming.
+- [x] Manifest serialization and schema behavior.
+- [x] Credential redaction.
+- [x] Git/Git LFS command construction.
+- [x] Status aggregation and exit-code mapping.
+- [x] LFS detection.
+- [x] `.gitmodules` parsing.
+- [x] JSON result stability.
 
 ### Integration tests
 

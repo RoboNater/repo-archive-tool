@@ -3,12 +3,27 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
 
 from repo_archive.git import CommandExecutionError, GitRunner
+
+
+def test_git_streams_stdout_without_retaining_it() -> None:
+    lines: list[str] = []
+
+    result = GitRunner(git_executable=sys.executable).git_stream_stdout(
+        "-c",
+        "print('first'); print('token=secret')",
+        on_line=lines.append,
+    )
+
+    assert result.succeeded
+    assert result.stdout == ""
+    assert lines == ["first", "token=***"]
 
 
 @patch("repo_archive.git.subprocess.run")
@@ -29,10 +44,29 @@ def test_git_captures_a_successful_command(mock_run: Mock) -> None:
         cwd=Path("archive"),
         capture_output=True,
         check=False,
+        encoding="utf-8",
+        errors="replace",
+        input=None,
         shell=False,
         text=True,
         timeout=30,
     )
+
+
+@patch("repo_archive.git.subprocess.run")
+def test_git_supports_batched_input_and_replacement_decoding(mock_run: Mock) -> None:
+    mock_run.return_value = subprocess.CompletedProcess(
+        args=("git", "cat-file", "--batch-check"),
+        returncode=0,
+        stdout="tree-id tree\n",
+        stderr="",
+    )
+
+    result = GitRunner().git("cat-file", "--batch-check", input_text="main^{tree}\n")
+
+    assert result.stdout == "tree-id tree\n"
+    assert mock_run.call_args.kwargs["input"] == "main^{tree}\n"
+    assert mock_run.call_args.kwargs["errors"] == "replace"
 
 
 @patch("repo_archive.git.subprocess.run")

@@ -39,7 +39,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     backup.add_argument("--name", help="archive-set name override")
     backup.add_argument(
-        "--no-lfs", action="store_true", help="reserved for LFS support"
+        "--no-lfs",
+        action="store_true",
+        help="intentionally skip LFS object fetching (partial when LFS is detected)",
     )
     backup.add_argument("--bundle", action="store_true", help="reserved for snapshots")
     backup.add_argument(
@@ -50,6 +52,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     update = subcommands.add_parser("update", help="safely refresh an archive")
     update.add_argument("archive_path", type=Path)
+    update.add_argument(
+        "--no-lfs",
+        action="store_true",
+        help="intentionally skip LFS object fetching (partial when LFS is detected)",
+    )
     update.add_argument("--json", action="store_true", dest="command_json")
     update.add_argument("--verbose", action="store_true", dest="command_verbose")
 
@@ -86,10 +93,15 @@ def main() -> int:
         except ValueError as error:
             result = _configuration_failure("backup", str(error))
         else:
-            result = backup_archive(arguments.remote_url, layout)
+            result = backup_archive(
+                arguments.remote_url, layout, lfs_enabled=not arguments.no_lfs
+            )
             result = _add_deferred_option_warnings(result, arguments)
     elif arguments.command == "update":
-        result = update_archive(ArchiveLayout(arguments.archive_path))
+        result = update_archive(
+            ArchiveLayout(arguments.archive_path),
+            lfs_enabled=not arguments.no_lfs,
+        )
     elif arguments.command == "info":
         result = info_archive(ArchiveLayout(arguments.archive_path))
     elif arguments.command == "verify":
@@ -133,8 +145,6 @@ def _add_deferred_option_warnings(
     result: OperationResult, arguments: argparse.Namespace
 ) -> OperationResult:
     warnings = list(result.warnings)
-    if arguments.no_lfs:
-        warnings.append("--no-lfs has no effect until Git LFS support is implemented.")
     if arguments.bundle:
         warnings.append("--bundle has no effect until snapshot support is implemented.")
     if arguments.metadata:

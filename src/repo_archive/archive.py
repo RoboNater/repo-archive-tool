@@ -12,6 +12,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from repo_archive.git import CommandResult, GitRunner
+from repo_archive.lfs import archive_lfs
 from repo_archive.manifest import Manifest, load_manifest, write_json_atomic
 from repo_archive.remote import Remote, display_remote, normalize_remote
 from repo_archive.reporting import write_latest_reports
@@ -21,6 +22,7 @@ from repo_archive.results import (
     ErrorKind,
     OperationResult,
 )
+from repo_archive.submodules import inspect_submodules
 
 
 @dataclass(frozen=True)
@@ -64,6 +66,7 @@ def backup_archive(
     remote_url: str,
     layout: ArchiveLayout,
     *,
+    lfs_enabled: bool = True,
     runner: GitRunner | None = None,
 ) -> OperationResult:
     """Create or safely refresh *layout* from *remote_url*.
@@ -73,12 +76,21 @@ def backup_archive(
     the current mirror.
     """
     remote = normalize_remote(remote_url)
-    result = _create_or_update(layout, remote, runner or GitRunner(), "backup")
+    result = _create_or_update(
+        layout,
+        remote,
+        runner or GitRunner(),
+        "backup",
+        lfs_enabled=lfs_enabled,
+    )
     return _record_result(layout, result)
 
 
 def update_archive(
-    layout: ArchiveLayout, *, runner: GitRunner | None = None
+    layout: ArchiveLayout,
+    *,
+    lfs_enabled: bool = True,
+    runner: GitRunner | None = None,
 ) -> OperationResult:
     """Safely refresh an archive using the source remote configured in its mirror."""
     runner = runner or GitRunner()
@@ -106,7 +118,10 @@ def update_archive(
                 errors=(str(error),),
             ),
         )
-    return _record_result(layout, _create_or_update(layout, remote, runner, "update"))
+    return _record_result(
+        layout,
+        _create_or_update(layout, remote, runner, "update", lfs_enabled=lfs_enabled),
+    )
 
 
 def _create_or_update(
@@ -114,6 +129,8 @@ def _create_or_update(
     remote: Remote,
     runner: GitRunner,
     operation: str,
+    *,
+    lfs_enabled: bool,
 ) -> OperationResult:
     layout.ensure_directories()
     existing = layout.mirror_path.exists()
@@ -158,8 +175,54 @@ def _create_or_update(
         if isinstance(state, CommandResult):
             return _failure_result(operation, layout, "git refs", state)
 
+        lfs = archive_lfs(
+            staged_mirror,
+            runner,
+            enabled=lfs_enabled,
+            previous_mirror=layout.mirror_path if existing else None,
+        )
+        if not lfs.promotable:
+            return OperationResult(
+                operation=operation,
+                archive_path=layout.path,
+                components=(
+                    ComponentResult(
+                        "git mirror",
+                        ComponentStatus.PARTIAL,
+                        f"{action} The staged mirror was not promoted; the existing "
+                        "archived mirror is unchanged.",
+                    ),
+                    ComponentResult(
+                        "git refs",
+                        ComponentStatus.PARTIAL,
+                        "Staged refs were enumerated but not published: "
+                        + _state_message(state),
+                    ),
+                    ComponentResult(
+                        "git integrity",
+                        ComponentStatus.PARTIAL,
+                        "The staged mirror passed Git fsck but was not promoted.",
+                    ),
+                    lfs.component,
+                    ComponentResult(
+                        "submodules",
+                        ComponentStatus.PARTIAL,
+                        "Submodule inspection was skipped because the staged mirror "
+                        "could not be promoted.",
+                    ),
+                    ComponentResult(
+                        "manifest",
+                        ComponentStatus.PARTIAL,
+                        "Manifest not updated; the previous manifest was retained.",
+                    ),
+                ),
+            )
+        submodules = inspect_submodules(staged_mirror, runner)
+
         _promote(staged_mirror, layout.mirror_path)
-        manifest = _updated_manifest(layout, remote, state)
+        manifest = _updated_manifest(
+            layout, remote, state, lfs.manifest, submodules.manifest
+        )
         write_json_atomic(layout.manifest_path, manifest.to_dict())
     finally:
         shutil.rmtree(staging_root, ignore_errors=True)
@@ -168,6 +231,8 @@ def _create_or_update(
         ComponentResult("git mirror", ComponentStatus.COMPLETE, action),
         ComponentResult("git refs", ComponentStatus.COMPLETE, _state_message(state)),
         ComponentResult("git integrity", ComponentStatus.COMPLETE, "Git fsck passed."),
+        lfs.component,
+        submodules.component,
         ComponentResult("manifest", ComponentStatus.COMPLETE, "Manifest updated."),
     )
     return OperationResult(
@@ -207,7 +272,11 @@ def _read_mirror_state(path: Path, runner: GitRunner) -> MirrorState | CommandRe
 
 
 def _updated_manifest(
-    layout: ArchiveLayout, remote: Remote, state: MirrorState
+    layout: ArchiveLayout,
+    remote: Remote,
+    state: MirrorState,
+    lfs: dict[str, object],
+    submodules: dict[str, object],
 ) -> Manifest:
     try:
         existing = load_manifest(layout.manifest_path)
@@ -231,7 +300,14 @@ def _updated_manifest(
         "owner": remote.owner,
         "repository": remote.repository,
     }
-    return replace(existing, source=source, archive=archive, git=git)
+    return replace(
+        existing,
+        source=source,
+        archive=archive,
+        git=git,
+        lfs=lfs,
+        submodules=submodules,
+    )
 
 
 def _validate_source_identity(
