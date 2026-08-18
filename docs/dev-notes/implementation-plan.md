@@ -1,7 +1,7 @@
 # repo-archive-tool Implementation Plan
 
 **Status:** In progress
-**Last reviewed:** 2026-08-16
+**Last reviewed:** 2026-08-18
 **Governing specification:** [`repo-archive-tool-spec.md`](../../repo-archive-tool-spec.md)
 
 This is the working implementation plan for `repo-archive-tool`. Keep it aligned with the repository as design decisions are made and phases are completed. The specification defines product requirements; this document records the intended implementation sequence and current project state.
@@ -38,9 +38,10 @@ This is the working implementation plan for `repo-archive-tool`. Keep it aligned
   `.gitattributes`. Stage existing immutable LFS objects with same-volume hard
   links and a normal-copy fallback; never promote a staged update when the
   previous LFS store could not be preserved.
-- Batch submodule ref-to-tree resolution, inspect each unique tree once, and
-  cache parsed `.gitmodules` blobs. Preserve valid findings when historical
-  definitions are incomplete, reporting those entries as warnings.
+- Batch submodule ref-to-tree and root `.gitmodules` resolution, cache parsed
+  configuration blobs, and use path-limited tree queries for only the declared
+  submodule paths. Preserve valid findings when historical definitions are
+  incomplete, reporting those entries as warnings.
 
 ## Target Project Structure
 
@@ -240,9 +241,10 @@ review scenarios.
 
 **Follow-up review hardening 2026-08-17:** LFS object discovery streams the
 full reachable-object walk instead of buffering it in memory. Submodule
-inspection batch-checks each unique root tree for `.gitmodules` and performs a
-recursive tree walk only where that file exists; all archived refs remain in
-scope so dependencies reachable only from non-branch refs are not hidden.
+inspection batch-checks each unique root tree for `.gitmodules` and limits
+gitlink inspection to paths declared by the parsed configuration; all archived
+refs remain in scope so dependencies reachable only from non-branch refs are
+not hidden.
 Human-readable submodule summaries bound historical commit details while the
 manifest retains the full list, and valueless config keys flow through the
 normal incomplete-definition warning. When an LFS storage-copy failure blocks
@@ -250,6 +252,19 @@ promotion, reports retain their normal component shape and mark unpublished or
 skipped work as partial rather than complete. Focused regression tests cover
 the streaming runner, no-submodule fast path, bounded summaries, valueless
 keys, and non-promotion reporting.
+
+**Third review hardening 2026-08-18:** Backup, info, and verify share the same
+bounded human-readable submodule summary while manifests retain complete
+commit histories. Submodule gitlinks are read with path-limited `ls-tree`
+queries rather than full recursive listings. A proposed `cat-file --batch`
+lookup was not used because Git reports normal external gitlink targets as
+missing when their commit objects are absent from the superproject; `ls-tree`
+reads the pinned OIDs directly from the tree without requiring those objects.
+Per-tree failures no longer discard successful discovery or inflate
+`refs_inspected`, dead tree-listing state was removed, and streamed Git stdout
+is redacted before callbacks receive it. Tests include an external-object
+gitlink, mixed per-tree discovery outcomes, shared summary formatting, and
+streamed-output redaction.
 
 ## Phase 5: Bundle Snapshots and Restore
 

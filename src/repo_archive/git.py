@@ -179,7 +179,11 @@ class GitRunner:
                 try:
                     with process.stdout:
                         for line in process.stdout:
-                            on_line(line.removesuffix("\n").removesuffix("\r"))
+                            on_line(
+                                redact_sensitive_text(
+                                    line.removesuffix("\n").removesuffix("\r")
+                                )
+                            )
                 except BaseException as error:
                     reader_errors.append(error)
                     process.kill()

@@ -355,7 +355,7 @@ def test_missing_git_lfs_tool_marks_detected_repository_partial(
 
 def test_submodules_are_recorded_and_reported_as_a_warning(tmp_path: Path) -> None:
     remote, worktree = create_remote(tmp_path)
-    pinned_commit = git("rev-parse", "HEAD", cwd=worktree)
+    pinned_commit = "1" * 40
     (worktree / ".gitmodules").write_text(
         '[submodule "my library"]\n'
         '\tpath = "vendor/library"\n'

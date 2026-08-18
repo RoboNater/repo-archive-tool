@@ -17,13 +17,13 @@ def test_git_streams_stdout_without_retaining_it() -> None:
 
     result = GitRunner(git_executable=sys.executable).git_stream_stdout(
         "-c",
-        "print('first'); print('second')",
+        "print('first'); print('token=secret')",
         on_line=lines.append,
     )
 
     assert result.succeeded
     assert result.stdout == ""
-    assert lines == ["first", "second"]
+    assert lines == ["first", "token=***"]
 
 
 @patch("repo_archive.git.subprocess.run")

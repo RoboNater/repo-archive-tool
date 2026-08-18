@@ -23,6 +23,7 @@ from repo_archive.results import (
     ErrorKind,
     OperationResult,
 )
+from repo_archive.submodules import summarize_submodule_definitions
 
 
 def info_archive(
@@ -165,20 +166,9 @@ def _status_component(name: str, value: dict[str, object]) -> ComponentResult:
         repositories = value.get("repositories", [])
         count = len(repositories) if isinstance(repositories, list) else 0
         detail += f" {count} definition(s); repositories are not recursively archived."
-        if isinstance(repositories, list):
-            for repository in repositories:
-                if not isinstance(repository, dict):
-                    continue
-                commits = repository.get("commits", [])
-                commit_text = (
-                    ", ".join(str(commit) for commit in commits)
-                    if isinstance(commits, list)
-                    else str(commits)
-                )
-                detail += (
-                    f" {repository.get('path')} -> {repository.get('url')} at "
-                    f"{commit_text or 'no gitlink'}."
-                )
+        summary = summarize_submodule_definitions(repositories)
+        if summary:
+            detail += f" {summary}."
     return ComponentResult(name, component_status, detail)
 
 
