@@ -350,6 +350,19 @@ metadata, and expanded diagnostics. Requirements, uv-based contribution
 commands, credential expectations, roadmap links, the MIT license, and the
 GitHub issue feedback channel are included and aligned with the shipped CLI.
 
+**Documentation review follow-up 2026-08-18:** Review clarified that
+verification writes latest reports and successful-verification metadata, that
+credential-embedded remotes are currently unsupported by `update`, that
+deferred warnings do not override more severe component outcomes, and that
+JSON output is needed for unambiguous component labels in the current human
+renderer. Shell-specific line continuations were removed from user examples.
+Product follow-ups track structured state-write failures in
+[#10](https://github.com/RoboNater/repo-archive-tool/issues/10), safe internal
+handling of credential-bearing origins in
+[#11](https://github.com/RoboNater/repo-archive-tool/issues/11), and labeled
+human-readable output in
+[#12](https://github.com/RoboNater/repo-archive-tool/issues/12).
+
 **Exit criterion:** A new user can install the tool, create or update an
 archive, inspect and verify it, understand completeness and current
 limitations, and provide feedback without reading source code or the full

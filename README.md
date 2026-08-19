@@ -66,7 +66,9 @@ repo-archive update <archive-path>
 `verify` performs full Git object, LFS, and existing-bundle checks by default.
 Use `--quick` for structural and configuration checks that deliberately skip
 those deeper integrity checks. Add `--json` to any current subcommand for a
-stable machine-readable result.
+stable machine-readable result. Verification is not read-only: every attempt
+writes the latest reports, and a successful verification also records its time
+and mode in `manifest.json`, so the archive set must remain writable.
 
 See the [usage guide](docs/usage.md) for archive-path examples, all implemented
 options, automation output, reports, exit codes, LFS behavior, submodule
@@ -138,12 +140,13 @@ well as the aggregate exit code.
 - Verbose diagnostics: `--verbose` is accepted but expanded diagnostic output
   is not implemented.
 - Credentials: emitted results, manifests, reports, and exceptions redact
-  supported secret forms. The mirror's native `origin` configuration retains
-  its source URL, so use Git credential helpers, SSH configuration, or an SSH
-  agent instead of embedding secrets in that URL.
+  supported secret forms. Credential-embedded source URLs are not currently
+  supported by `update`; use Git credential helpers, SSH configuration, or an
+  SSH agent instead of embedding secrets in the mirror's `origin` URL.
 
-Deferred-option warnings result in `complete-with-warnings` and exit `0`; that
-exit code does not mean the deferred feature ran.
+A deferred-option warning by itself results in `complete-with-warnings` and
+exit `0`; partial or failed components still take precedence. A zero exit code
+does not mean the deferred feature ran.
 
 ## Development
 

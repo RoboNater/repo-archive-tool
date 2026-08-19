@@ -55,8 +55,7 @@ silently sharing an archive. Local remotes use
 a single safe directory name:
 
 ```bash
-repo-archive backup https://github.com/OWNER/REPO.git \
-  --root ./archives --name owner-repo
+repo-archive backup https://github.com/OWNER/REPO.git --root ./archives --name owner-repo
 ```
 
 That archive is stored at `./archives/owner-repo`. An existing named archive
@@ -64,8 +63,7 @@ cannot be reused for a different source. For scripts, `--json` reports the
 resolved path in the `archive_path` field:
 
 ```bash
-repo-archive backup https://github.com/OWNER/REPO.git \
-  --root ./archives --json
+repo-archive backup https://github.com/OWNER/REPO.git --root ./archives --json
 ```
 
 Backup stages and validates a new mirror before publishing it. Repeating the
@@ -84,7 +82,9 @@ repo-archive update <archive-path>
 
 `info` reports the saved source, creation and update timestamps, ref counts,
 LFS and submodule state, available bundle count, metadata state, and the last
-successful verification.
+successful verification. The current human-readable renderer omits component
+names, so use `info <archive-path> --json` when you need to distinguish fields
+such as LFS, submodules, and metadata unambiguously.
 
 `verify` performs full verification by default. It checks archive structure,
 the configured source, refs, manifest consistency, the Git object database with
@@ -102,6 +102,12 @@ periodic full verification:
 ```bash
 repo-archive verify <archive-path> --quick
 ```
+
+Verification is not read-only. Every attempt writes `reports/latest.json` and
+`reports/latest.txt`; a successful verification also updates
+`last_verified_at` and `last_verification_mode` in `manifest.json`. The archive
+set must therefore be writable even when the mirror itself is only being
+checked.
 
 `update` reads the source from `mirror.git` and follows the same staged,
 validated update process as a repeated `backup`:
@@ -222,8 +228,9 @@ that those components have been archived.
 Let Git handle authentication through an SSH agent, SSH configuration, or a
 credential helper. Avoid putting passwords or access tokens directly in a
 remote URL. The tool redacts supported credential forms from manifests,
-reports, emitted diagnostics, and exceptions, but the native mirror's
-`origin` configuration retains the source URL needed for future updates.
+reports, emitted diagnostics, and exceptions. Credential-embedded source URLs
+are not currently supported by `update`: internal command-result redaction
+makes the stored URL unusable when it is read back for a later refresh.
 
 Before sharing an entire archive set, inspect the mirror's configured URL:
 
@@ -243,6 +250,7 @@ The following capabilities are planned and are not shipped yet:
 - Exporting GitHub or other provider metadata. `backup --metadata github` is
   accepted but performs no export and reports a deferred-work warning.
 
-Because deferred-option warnings yield `complete-with-warnings`, a zero exit
-code does not mean that the deferred request was performed. Check warnings and
+A deferred-option warning by itself yields `complete-with-warnings` and exit
+code `0`, but partial or failed components take precedence. A zero exit code
+does not mean that the deferred request was performed. Check warnings and
 component details as well as the exit code.
