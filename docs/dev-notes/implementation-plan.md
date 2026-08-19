@@ -363,6 +363,12 @@ handling of credential-bearing origins in
 human-readable output in
 [#12](https://github.com/RoboNater/repo-archive-tool/issues/12).
 
+**Final documentation review 2026-08-18:** The single-line named-archive
+example remains intentionally cross-shell and copyable even though its fenced
+line is slightly wider than the surrounding prose. Credential guidance now
+states explicitly that raw `git remote get-url` output shows the exact stored
+URL, including embedded credentials, and must be treated as sensitive.
+
 **Exit criterion:** A new user can install the tool, create or update an
 archive, inspect and verify it, understand completeness and current
 limitations, and provide feedback without reading source code or the full

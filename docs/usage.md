@@ -238,6 +238,9 @@ Before sharing an entire archive set, inspect the mirror's configured URL:
 git -C <archive-path>/mirror.git remote get-url origin
 ```
 
+This raw Git command shows the URL exactly as Git recorded it, including any
+embedded credentials. Treat its output as sensitive.
+
 ## Deferred capabilities
 
 The following capabilities are planned and are not shipped yet:
