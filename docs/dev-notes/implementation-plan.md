@@ -14,7 +14,7 @@ This is the working implementation plan for `repo-archive-tool`. Keep it aligned
 - [x] Core archive MVP implemented.
 - [x] LFS-aware archival implemented.
 - [x] Submodule awareness and incompleteness reporting implemented.
-- [ ] Current-capability usage and project documentation completed.
+- [x] Current-capability usage and project documentation completed.
 - [ ] Bundle snapshots and offline restore implemented.
 
 ## Implementation Decisions
@@ -326,20 +326,29 @@ diagnostics are redacted.
 
 ### Project README
 
-- [ ] Add the project purpose, current implementation status, and an invitation
+- [x] Add the project purpose, current implementation status, and an invitation
   to provide early feedback through GitHub issues.
-- [ ] Document Git, conditional Git LFS, Python, and uv requirements.
-- [ ] Provide installation examples such as `uv tool install .` and the
+- [x] Document Git, conditional Git LFS, Python, and uv requirements.
+- [x] Provide installation examples such as `uv tool install .` and the
   uv-managed contributor setup.
-- [ ] Include a concise current-command quick start for `backup`, `update`,
+- [x] Include a concise current-command quick start for `backup`, `update`,
   `info`, and `verify`.
-- [ ] Explain archive layout, manifests, reports, completeness outcomes, and
+- [x] Explain archive layout, manifests, reports, completeness outcomes, and
   important implemented options.
-- [ ] Document current LFS, submodule, metadata, bundle, restore, and
+- [x] Document current LFS, submodule, metadata, bundle, restore, and
   credential-handling limitations without implying deferred behavior exists.
-- [ ] Include uv-based development, lint, formatting, and test commands.
-- [ ] Link the specification, roadmap, usage guide, MIT license, and feedback
+- [x] Include uv-based development, lint, formatting, and test commands.
+- [x] Link the specification, roadmap, usage guide, MIT license, and feedback
   channel.
+
+**Phase 5 completed 2026-08-18:** The README now gives new users a concise
+installation and four-command workflow, explains safe staged refreshes,
+archive layout and completeness, and points to the task-oriented usage guide
+for operational detail. Both documents distinguish current LFS and submodule
+behavior from deferred snapshots, restore, recursive archival, provider
+metadata, and expanded diagnostics. Requirements, uv-based contribution
+commands, credential expectations, roadmap links, the MIT license, and the
+GitHub issue feedback channel are included and aligned with the shipped CLI.
 
 **Exit criterion:** A new user can install the tool, create or update an
 archive, inspect and verify it, understand completeness and current
