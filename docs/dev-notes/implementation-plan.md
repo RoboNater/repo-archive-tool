@@ -293,7 +293,7 @@ and submodule-awareness features can receive early user feedback.
 
 ### Short usage guide
 
-- [ ] Create `docs/usage.md` with a task-oriented quick start for the currently
+- [x] Create `docs/usage.md` with a task-oriented quick start for the currently
   implemented workflow:
 
   ```bash
@@ -303,16 +303,26 @@ and submodule-awareness features can receive early user feedback.
   repo-archive update <archive-path>
   ```
 
-- [ ] Explain installation with uv, archive-path discovery, repeatable updates,
+- [x] Explain installation with uv, archive-path discovery, repeatable updates,
   quick and full verification, JSON automation, verbose output, reports, and
   exit codes.
-- [ ] Explain current LFS archival and verification behavior, `--no-lfs`
+- [x] Explain current LFS archival and verification behavior, `--no-lfs`
   partial archives, submodule detection without recursive archival, and
   credential-handling expectations.
-- [ ] Clearly label bundle creation, restore, recursive submodule archival, and
+- [x] Clearly label bundle creation, restore, recursive submodule archival, and
   provider metadata export as deferred. Document that accepted `--bundle` and
   `--metadata` requests currently report deferred work rather than performing
   those operations.
+
+**Usage guide completed 2026-08-18:** `docs/usage.md` documents installation,
+archive path derivation and overrides, staged repeatable updates, inspection,
+quick and full verification, structured output, latest-attempt reports, exit
+codes, LFS completeness, and non-recursive submodule discovery. It also labels
+snapshot creation, restore, recursive submodule archival, provider metadata,
+and expanded verbose diagnostics as deferred. Credential guidance recommends
+Git-managed authentication and calls out that the mirror's native `origin`
+configuration retains its source URL even though persisted results and emitted
+diagnostics are redacted.
 
 ### Project README
 
