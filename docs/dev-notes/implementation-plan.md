@@ -14,7 +14,7 @@ This is the working implementation plan for `repo-archive-tool`. Keep it aligned
 - [x] Core archive MVP implemented.
 - [x] LFS-aware archival implemented.
 - [x] Submodule awareness and incompleteness reporting implemented.
-- [ ] Current-capability usage and project documentation completed.
+- [x] Current-capability usage and project documentation completed.
 - [ ] Bundle snapshots and offline restore implemented.
 
 ## Implementation Decisions
@@ -293,7 +293,7 @@ and submodule-awareness features can receive early user feedback.
 
 ### Short usage guide
 
-- [ ] Create `docs/usage.md` with a task-oriented quick start for the currently
+- [x] Create `docs/usage.md` with a task-oriented quick start for the currently
   implemented workflow:
 
   ```bash
@@ -303,33 +303,71 @@ and submodule-awareness features can receive early user feedback.
   repo-archive update <archive-path>
   ```
 
-- [ ] Explain installation with uv, archive-path discovery, repeatable updates,
+- [x] Explain installation with uv, archive-path discovery, repeatable updates,
   quick and full verification, JSON automation, verbose output, reports, and
   exit codes.
-- [ ] Explain current LFS archival and verification behavior, `--no-lfs`
+- [x] Explain current LFS archival and verification behavior, `--no-lfs`
   partial archives, submodule detection without recursive archival, and
   credential-handling expectations.
-- [ ] Clearly label bundle creation, restore, recursive submodule archival, and
+- [x] Clearly label bundle creation, restore, recursive submodule archival, and
   provider metadata export as deferred. Document that accepted `--bundle` and
   `--metadata` requests currently report deferred work rather than performing
   those operations.
 
+**Usage guide completed 2026-08-18:** `docs/usage.md` documents installation,
+archive path derivation and overrides, staged repeatable updates, inspection,
+quick and full verification, structured output, latest-attempt reports, exit
+codes, LFS completeness, and non-recursive submodule discovery. It also labels
+snapshot creation, restore, recursive submodule archival, provider metadata,
+and expanded verbose diagnostics as deferred. Credential guidance recommends
+Git-managed authentication and calls out that the mirror's native `origin`
+configuration retains its source URL even though persisted results and emitted
+diagnostics are redacted.
+
 ### Project README
 
-- [ ] Add the project purpose, current implementation status, and an invitation
+- [x] Add the project purpose, current implementation status, and an invitation
   to provide early feedback through GitHub issues.
-- [ ] Document Git, conditional Git LFS, Python, and uv requirements.
-- [ ] Provide installation examples such as `uv tool install .` and the
+- [x] Document Git, conditional Git LFS, Python, and uv requirements.
+- [x] Provide installation examples such as `uv tool install .` and the
   uv-managed contributor setup.
-- [ ] Include a concise current-command quick start for `backup`, `update`,
+- [x] Include a concise current-command quick start for `backup`, `update`,
   `info`, and `verify`.
-- [ ] Explain archive layout, manifests, reports, completeness outcomes, and
+- [x] Explain archive layout, manifests, reports, completeness outcomes, and
   important implemented options.
-- [ ] Document current LFS, submodule, metadata, bundle, restore, and
+- [x] Document current LFS, submodule, metadata, bundle, restore, and
   credential-handling limitations without implying deferred behavior exists.
-- [ ] Include uv-based development, lint, formatting, and test commands.
-- [ ] Link the specification, roadmap, usage guide, MIT license, and feedback
+- [x] Include uv-based development, lint, formatting, and test commands.
+- [x] Link the specification, roadmap, usage guide, MIT license, and feedback
   channel.
+
+**Phase 5 completed 2026-08-18:** The README now gives new users a concise
+installation and four-command workflow, explains safe staged refreshes,
+archive layout and completeness, and points to the task-oriented usage guide
+for operational detail. Both documents distinguish current LFS and submodule
+behavior from deferred snapshots, restore, recursive archival, provider
+metadata, and expanded diagnostics. Requirements, uv-based contribution
+commands, credential expectations, roadmap links, the MIT license, and the
+GitHub issue feedback channel are included and aligned with the shipped CLI.
+
+**Documentation review follow-up 2026-08-18:** Review clarified that
+verification writes latest reports and successful-verification metadata, that
+credential-embedded remotes are currently unsupported by `update`, that
+deferred warnings do not override more severe component outcomes, and that
+JSON output is needed for unambiguous component labels in the current human
+renderer. Shell-specific line continuations were removed from user examples.
+Product follow-ups track structured state-write failures in
+[#10](https://github.com/RoboNater/repo-archive-tool/issues/10), safe internal
+handling of credential-bearing origins in
+[#11](https://github.com/RoboNater/repo-archive-tool/issues/11), and labeled
+human-readable output in
+[#12](https://github.com/RoboNater/repo-archive-tool/issues/12).
+
+**Final documentation review 2026-08-18:** The single-line named-archive
+example remains intentionally cross-shell and copyable even though its fenced
+line is slightly wider than the surrounding prose. Credential guidance now
+states explicitly that raw `git remote get-url` output shows the exact stored
+URL, including embedded credentials, and must be treated as sensitive.
 
 **Exit criterion:** A new user can install the tool, create or update an
 archive, inspect and verify it, understand completeness and current
