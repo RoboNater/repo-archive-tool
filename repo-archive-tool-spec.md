@@ -703,12 +703,15 @@ The second is an extensible set of provider-specific modules and must never be r
 
 ## 23. Open Design Decisions
 
+Snapshot LFS ownership is resolved by the
+[bundled snapshot and restore specification](specification-snapshot-for-bundled-snapshots-and-restore.md):
+each timestamped snapshot owns a self-contained, full-history LFS payload.
+
 The following can be resolved during implementation without blocking the initial repository:
 
 - final Python CLI framework (`argparse`, Click, or Typer);
 - license;
 - exact archive-root naming/URL normalization rules;
-- whether snapshots copy LFS objects into a timestamped snapshot tree or rely on filesystem-level backup of the mirror's LFS store;
 - direct GitHub API implementation versus `gh` for metadata;
 - policy for whether detected-but-unarchived submodules produce `partial` or `complete-with-warnings`;
 - retention policy syntax for old snapshots;
