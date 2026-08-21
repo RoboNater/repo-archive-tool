@@ -51,6 +51,10 @@ This is the working implementation plan for `repo-archive-tool`. Keep it aligned
   materialization without creating a restoration dependency on the mirror or
   another snapshot. The normative contract is in
   [`specification-snapshot-for-bundled-snapshots-and-restore.md`](../../specification-snapshot-for-bundled-snapshots-and-restore.md).
+- Require independent full-history LFS enumeration during snapshot creation.
+  Routine verification of published snapshots validates payloads against the
+  recorded inventory; independent recomputation from a bundle is an explicit
+  deep mode because it requires materializing the bundled Git history.
 
 ## Target Project Structure
 

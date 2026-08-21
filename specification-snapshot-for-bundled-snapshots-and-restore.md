@@ -36,11 +36,12 @@ entries, independent lifetime, and no path reference to external content. LFS
 objects are content-addressed and must never be modified in place. Published
 snapshot payloads are treated as immutable.
 
-If required LFS content was unavailable because of `--no-lfs`, unavailable
-Git LFS tooling, or a failed or incomplete fetch, the snapshot may be published
-as `partial`. It must name every unavailable OID. Such a snapshot restores its
-Git history without the mirror and reports its exact LFS gap; the mirror is
-never an implicit fallback.
+If snapshot creation otherwise succeeds but required LFS content was
+unavailable because of `--no-lfs`, unavailable Git LFS tooling, or a failed or
+incomplete fetch, the snapshot must be published as `partial` rather than
+refused because of that LFS gap. It must name every unavailable OID. Such a
+snapshot restores its Git history without the mirror and reports its exact LFS
+gap; the mirror is never an implicit fallback.
 
 ## Invariants
 
@@ -110,13 +111,20 @@ All recorded paths must be relative to the snapshot subtree.
 
 ### Verification and restore
 
-Verification must:
+Creation-time verification must independently compute the required historical
+LFS OIDs from the included refs before publication.
+
+Verification of an already-published snapshot must:
 
 - run `git bundle verify` and confirm the bundle refs match `snapshot.json`;
-- independently recompute required historical LFS OIDs;
 - SHA-256 hash every present LFS object rather than check presence alone; and
 - confirm that the recorded present and unavailable sets exactly match the
   subtree.
+
+Routine published-snapshot verification uses the recorded required-OID set.
+Independent recomputation from the bundle is required only in an explicit deep
+verification mode because it requires materializing the bundled Git history in
+a temporary repository.
 
 The valid outcomes are `verified-complete`, `verified-partial`, and `failed`.
 A declared partial snapshot passes verification only when all present content
