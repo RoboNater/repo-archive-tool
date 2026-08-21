@@ -17,7 +17,7 @@ from repo_archive.archive import ArchiveLayout
 from repo_archive.filesystem import safe_sha256_file, sha256_file, try_reflink
 from repo_archive.git import CommandResult, GitRunner
 from repo_archive.manifest import load_manifest, write_json_atomic
-from repo_archive.reporting import write_latest_reports
+from repo_archive.reporting import add_report_write_warning, write_latest_reports
 from repo_archive.results import (
     ComponentResult,
     ComponentStatus,
@@ -109,15 +109,16 @@ def create_snapshot(
             record_result,
         )
 
-    layout.snapshots_path.mkdir(parents=True, exist_ok=True)
-    timestamp, snapshot_name = _unique_snapshot_identity(
-        layout.snapshots_path, created_at
-    )
-    final_path = layout.snapshots_path / snapshot_name
-    staging_path = Path(
-        tempfile.mkdtemp(prefix=f".{snapshot_name}.tmp-", dir=layout.snapshots_path)
-    )
+    staging_path: Path | None = None
     try:
+        layout.snapshots_path.mkdir(parents=True, exist_ok=True)
+        timestamp, snapshot_name = _unique_snapshot_identity(
+            layout.snapshots_path, created_at
+        )
+        final_path = layout.snapshots_path / snapshot_name
+        staging_path = Path(
+            tempfile.mkdtemp(prefix=f".{snapshot_name}.tmp-", dir=layout.snapshots_path)
+        )
         bundle_path = staging_path / "snapshot.bundle"
         bundled = runner.git(
             "bundle", "create", str(bundle_path), "--all", cwd=layout.mirror_path
@@ -169,20 +170,7 @@ def create_snapshot(
         staging_path.rename(final_path)
         relative_path = final_path.relative_to(layout.path).as_posix()
         archive = dict(manifest.archive)
-        snapshots = list(archive.get("snapshots", []))
-        snapshots.append(
-            {
-                "path": relative_path,
-                "created_at": timestamp,
-                "status": status,
-                "verification": verification_outcome,
-                "bundle_sha256": record["bundle"]["sha256"],
-                "ref_count": len(refs),
-                "required_lfs_object_count": lfs_record["required_object_count"],
-                "unavailable_lfs_oids": lfs_record["unavailable_oids"],
-            }
-        )
-        archive["snapshots"] = snapshots
+        archive["snapshots"] = _rebuild_snapshot_index(layout)
         write_json_atomic(
             layout.manifest_path, replace(manifest, archive=archive).to_dict()
         )
@@ -200,7 +188,7 @@ def create_snapshot(
             record_result,
         )
     finally:
-        if staging_path.exists():
+        if staging_path is not None and staging_path.exists():
             shutil.rmtree(staging_path, ignore_errors=True)
 
     unavailable = lfs_record["unavailable_oids"]
@@ -401,19 +389,20 @@ def _preflight_snapshot_space(
     mirror_path: Path,
     required_oids: tuple[str, ...],
 ) -> None:
-    payload_bytes = 0
+    available: list[tuple[Path, int]] = []
     for oid in required_oids:
         source = mirror_path / "lfs" / "objects" / oid[:2] / oid[2:4] / oid
-        if not source.exists():
+        if not source.is_file():
             continue
-        if not source.is_file() or safe_sha256_file(source) != oid:
-            raise SnapshotError(f"Archived LFS object is unreadable or corrupt: {oid}")
         try:
-            payload_bytes += source.stat().st_size
+            available.append((source, source.stat().st_size))
         except OSError as error:
             raise SnapshotError(
                 f"Could not measure archived LFS object {oid}: {error}"
             ) from error
+    payload_bytes = sum(size for _, size in available)
+    if available and _probe_hardlink(available[0][0], staging_path):
+        payload_bytes = 0
     try:
         free_bytes = shutil.disk_usage(staging_path).free
     except OSError:
@@ -426,6 +415,18 @@ def _preflight_snapshot_space(
             f"{free_bytes} available.",
             ErrorKind.GENERAL,
         )
+
+
+def _probe_hardlink(source: Path, staging_path: Path) -> bool:
+    probe = staging_path / ".lfs-hardlink-probe"
+    try:
+        os.link(source, probe)
+    except OSError:
+        return False
+    else:
+        return True
+    finally:
+        probe.unlink(missing_ok=True)
 
 
 def _materialize_lfs_payload(
@@ -626,6 +627,30 @@ def _unique_snapshot_identity(
     raise OSError("Could not allocate a unique UTC snapshot timestamp.")
 
 
+def _rebuild_snapshot_index(layout: ArchiveLayout) -> list[dict[str, object]]:
+    entries: list[dict[str, object]] = []
+    for snapshot_path in discover_snapshot_paths(layout):
+        try:
+            record = load_snapshot_record(snapshot_path)
+            bundle = record["bundle"]
+            lfs = record["lfs"]
+            entries.append(
+                {
+                    "path": snapshot_path.relative_to(layout.path).as_posix(),
+                    "created_at": record["created_at"],
+                    "status": record["status"],
+                    "verification": record["verification"],
+                    "bundle_sha256": bundle["sha256"],
+                    "ref_count": len(record["refs"]),
+                    "required_lfs_object_count": lfs["required_object_count"],
+                    "unavailable_lfs_oids": lfs["unavailable_oids"],
+                }
+            )
+        except (KeyError, OSError, TypeError, ValueError):
+            continue
+    return entries
+
+
 def _command_message(command: CommandResult) -> str:
     return (
         command.stderr.strip()
@@ -661,5 +686,8 @@ def _record(
     layout: ArchiveLayout, result: OperationResult, enabled: bool
 ) -> OperationResult:
     if enabled:
-        write_latest_reports(layout.reports_path, result)
+        try:
+            write_latest_reports(layout.reports_path, result)
+        except OSError as error:
+            return add_report_write_warning(result, error)
     return result

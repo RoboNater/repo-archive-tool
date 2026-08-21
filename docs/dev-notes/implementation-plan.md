@@ -459,9 +459,10 @@ atomic failure behavior, republishing with `git push --mirror`, declared-partial
 LFS recovery, and a conditional real Git LFS checkout.
 
 **Phase 6 review hardening 2026-08-21:** Ref-less mirrors now skip bundle
-creation with a warning; creation failures use general rather than verification
-exit status. Historical LFS pointer discovery streams the object walk and uses
-two `cat-file` batch processes instead of one process per small blob. Snapshot
+creation with a warning; bundle-creation failures use general rather than
+verification exit status. Historical LFS pointer discovery streams the object
+walk and uses two `cat-file` batch processes instead of one process per small
+blob. Snapshot
 creation performs a best-effort space preflight, treats corrupt archived LFS
 payloads as publication-blocking integrity failures, and disables further
 reflink attempts after the first same-filesystem failure. Verification
@@ -472,6 +473,18 @@ uses reflinks or independent copies for writable destinations. Documentation
 now distinguishes Git and LFS republishing and describes deep-verification peak
 space. Shared hashing, reflink, and read-only cleanup primitives live in
 `filesystem.py`; copy policies remain operation-specific by design.
+
+**Phase 6 re-review hardening 2026-08-21:** Snapshot space estimation now
+probes same-volume hard-link support, counts payload bytes only when copying may
+be required, and uses metadata rather than an extra content-hash pass.
+`--quick --deep` is rejected while `--full --deep` remains valid. Snapshot
+index drift is a warning because published subtrees are self-describing;
+malformed index data still fails verification, and the next successful
+snapshot rebuilds the index from published records. Snapshot staging setup and
+report persistence return structured results on write failures, report-warning
+deduplication uses one shared helper, and batched blob reads honor the runner's
+timeout. Corrupt archived LFS content remains publication-blocking by contract,
+with the refetch remedy and integrity-specific exit behavior documented.
 
 **Exit criterion:** A disconnected archive can produce a verified bundle, a
 normal working clone, an LFS-aware checkout where applicable, and a mirror that

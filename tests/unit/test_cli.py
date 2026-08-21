@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from repo_archive.archive import ArchiveLayout
 from repo_archive.cli import build_parser, main
 from repo_archive.reporting import render_text
@@ -65,6 +67,16 @@ def test_parser_accepts_info_and_verification_modes() -> None:
     assert snapshot.command == "snapshot"
     assert restore.snapshot == "stamp"
     assert restore.mirror is True
+
+
+def test_quick_and_deep_verification_modes_are_rejected() -> None:
+    with (
+        patch("sys.argv", ["repo-archive", "verify", "archive", "--quick", "--deep"]),
+        pytest.raises(SystemExit) as error,
+    ):
+        main()
+
+    assert error.value.code == 2
 
 
 def test_json_flag_emits_only_stable_json(capsys: object) -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import subprocess
 import sys
 import tempfile
@@ -98,6 +99,27 @@ def test_git_batch_blobs_streams_exact_binary_content(tmp_path: Path) -> None:
 
     assert result.succeeded
     assert received == {first_oid: first, second_oid: second}
+
+
+@patch("repo_archive.git.subprocess.Popen")
+def test_git_batch_blobs_honors_the_runner_timeout(mock_popen: Mock) -> None:
+    process = Mock()
+    process.stdout = io.BytesIO()
+    process.wait.side_effect = [
+        subprocess.TimeoutExpired(("git", "cat-file", "--batch"), 1),
+        0,
+    ]
+    mock_popen.return_value = process
+
+    with tempfile.TemporaryFile(mode="w+b") as object_ids:
+        result = GitRunner(timeout=1).git_batch_blobs(
+            cwd=Path("archive"), object_ids=object_ids, on_blob=lambda *_: None
+        )
+
+    assert result.returncode == 124
+    assert result.stderr == "Command timed out."
+    assert process.wait.call_args_list[0].kwargs == {"timeout": 1}
+    process.kill.assert_called_once()
 
 
 @patch("repo_archive.git.subprocess.run")

@@ -12,7 +12,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from repo_archive.archive import ArchiveLayout, backup_archive
-from repo_archive.filesystem import remove_readonly
+from repo_archive.filesystem import remove_readonly, safe_sha256_file
 from repo_archive.git import CommandResult, GitRunner
 from repo_archive.inspection import verify_archive
 from repo_archive.manifest import load_manifest
@@ -215,6 +215,50 @@ def test_preflight_rejects_insufficient_space_before_publication(
     assert not list(layout.snapshots_path.glob("*/snapshot.json"))
 
 
+def test_preflight_does_not_count_hardlinked_payload_bytes(tmp_path: Path) -> None:
+    remote, worktree = create_remote(tmp_path)
+    payload = b"x" * 100_000
+    oid = commit_lfs_pointer(worktree, payload)
+    layout = ArchiveLayout(tmp_path / "archives" / "project")
+    assert (
+        backup_archive(str(remote), layout, lfs_enabled=False).outcome
+        is Outcome.PARTIAL
+    )
+    source = layout.mirror_path / "lfs" / "objects" / oid[:2] / oid[2:4] / oid
+    source.parent.mkdir(parents=True)
+    source.write_bytes(payload)
+
+    with patch(
+        "repo_archive.snapshots.shutil.disk_usage",
+        return_value=SimpleNamespace(free=50_000),
+    ):
+        result = create_snapshot(layout)
+
+    assert result.outcome is Outcome.COMPLETE
+
+
+def test_preflight_does_not_hash_payloads(tmp_path: Path) -> None:
+    remote, worktree = create_remote(tmp_path)
+    payload = b"available payload\n"
+    oid = commit_lfs_pointer(worktree, payload)
+    layout = ArchiveLayout(tmp_path / "archives" / "project")
+    assert (
+        backup_archive(str(remote), layout, lfs_enabled=False).outcome
+        is Outcome.PARTIAL
+    )
+    source = layout.mirror_path / "lfs" / "objects" / oid[:2] / oid[2:4] / oid
+    source.parent.mkdir(parents=True)
+    source.write_bytes(payload)
+
+    with patch(
+        "repo_archive.snapshots.safe_sha256_file", wraps=safe_sha256_file
+    ) as hashed:
+        result = create_snapshot(layout)
+
+    assert result.outcome is Outcome.COMPLETE
+    assert sum(call.args[0].name == oid for call in hashed.call_args_list) == 2
+
+
 def test_bundle_creation_failure_uses_general_failure_exit(tmp_path: Path) -> None:
     remote, _ = create_remote(tmp_path)
     layout = ArchiveLayout(tmp_path / "archives" / "project")
@@ -225,6 +269,21 @@ def test_bundle_creation_failure_uses_general_failure_exit(tmp_path: Path) -> No
     assert result.outcome is Outcome.FAILED
     assert result.exit_code == 1
     assert "bundle creation failure" in result.errors[0]
+
+
+def test_unwritable_snapshot_staging_is_a_structured_failure(tmp_path: Path) -> None:
+    remote, _ = create_remote(tmp_path)
+    layout = ArchiveLayout(tmp_path / "archives" / "project")
+    assert backup_archive(str(remote), layout).outcome is Outcome.COMPLETE
+
+    with patch(
+        "repo_archive.snapshots.tempfile.mkdtemp",
+        side_effect=PermissionError("read-only archive"),
+    ):
+        result = create_snapshot(layout, record_result=False)
+
+    assert result.outcome is Outcome.FAILED
+    assert "read-only archive" in result.errors[0]
 
 
 def test_corrupt_archived_lfs_payload_prevents_snapshot_publication(
@@ -249,7 +308,9 @@ def test_corrupt_archived_lfs_payload_prevents_snapshot_publication(
     assert not list(layout.snapshots_path.glob("*/snapshot.json"))
 
 
-def test_verification_rejects_a_stale_manifest_snapshot_index(tmp_path: Path) -> None:
+def test_verification_warns_about_a_stale_manifest_snapshot_index(
+    tmp_path: Path,
+) -> None:
     remote, _ = create_remote(tmp_path)
     layout = ArchiveLayout(tmp_path / "archives" / "project")
     assert backup_archive(str(remote), layout).outcome is Outcome.COMPLETE
@@ -261,9 +322,53 @@ def test_verification_rejects_a_stale_manifest_snapshot_index(tmp_path: Path) ->
 
     result = verify_archive(layout, full=False)
 
-    assert result.outcome is Outcome.FAILED
-    assert result.exit_code == 4
+    assert result.outcome is Outcome.COMPLETE_WITH_WARNINGS
+    assert result.exit_code == 0
     component = next(
         item for item in result.components if item.name == "snapshot index"
     )
     assert "missing on disk" in (component.message or "")
+
+
+def test_snapshot_creation_rebuilds_the_manifest_index(tmp_path: Path) -> None:
+    remote, _ = create_remote(tmp_path)
+    layout = ArchiveLayout(tmp_path / "archives" / "project")
+    assert backup_archive(str(remote), layout).outcome is Outcome.COMPLETE
+    assert (
+        create_snapshot(
+            layout, created_at=datetime(2026, 8, 21, 12, 0, tzinfo=UTC)
+        ).outcome
+        is Outcome.COMPLETE
+    )
+    manifest_data = json.loads(layout.manifest_path.read_text(encoding="utf-8"))
+    manifest_data["archive"]["snapshots"] = []
+    layout.manifest_path.write_text(json.dumps(manifest_data), encoding="utf-8")
+
+    assert (
+        create_snapshot(
+            layout, created_at=datetime(2026, 8, 21, 13, 0, tzinfo=UTC)
+        ).outcome
+        is Outcome.COMPLETE
+    )
+
+    indexed = load_manifest(layout.manifest_path).archive["snapshots"]
+    assert [entry["path"] for entry in indexed] == [
+        "snapshots/2026-08-21T120000.000000Z",
+        "snapshots/2026-08-21T130000.000000Z",
+    ]
+
+
+def test_verification_rejects_a_malformed_manifest_snapshot_index(
+    tmp_path: Path,
+) -> None:
+    remote, _ = create_remote(tmp_path)
+    layout = ArchiveLayout(tmp_path / "archives" / "project")
+    assert backup_archive(str(remote), layout).outcome is Outcome.COMPLETE
+    manifest_data = json.loads(layout.manifest_path.read_text(encoding="utf-8"))
+    manifest_data["archive"]["snapshots"] = "invalid"
+    layout.manifest_path.write_text(json.dumps(manifest_data), encoding="utf-8")
+
+    result = verify_archive(layout, full=False)
+
+    assert result.outcome is Outcome.FAILED
+    assert result.exit_code == 4

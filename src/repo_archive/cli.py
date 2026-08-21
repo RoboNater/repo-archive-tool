@@ -10,7 +10,11 @@ from repo_archive import __version__
 from repo_archive.archive import ArchiveLayout, backup_archive, update_archive
 from repo_archive.inspection import info_archive, verify_archive
 from repo_archive.remote import derive_archive_path, normalize_remote
-from repo_archive.reporting import emit_result, write_latest_reports
+from repo_archive.reporting import (
+    add_report_write_warning,
+    emit_result,
+    write_latest_reports,
+)
 from repo_archive.restore import restore_archive
 from repo_archive.results import (
     ComponentResult,
@@ -118,6 +122,8 @@ def main() -> int:
     """Run the command-line interface."""
     parser = build_parser()
     arguments = parser.parse_args()
+    if arguments.command == "verify" and arguments.quick and arguments.deep:
+        parser.error("--quick cannot be combined with --deep")
     as_json = arguments.json or getattr(arguments, "command_json", False)
     if arguments.command == "backup":
         try:
@@ -242,18 +248,7 @@ def _write_final_report(result: OperationResult) -> OperationResult:
                 ArchiveLayout(result.archive_path).reports_path, result
             )
         except OSError as error:
-            if any(
-                "reports could not be written" in warning for warning in result.warnings
-            ):
-                return result
-            return OperationResult(
-                operation=result.operation,
-                archive_path=result.archive_path,
-                components=result.components,
-                warnings=result.warnings
-                + (f"Latest operation reports could not be written: {error}",),
-                errors=result.errors,
-            )
+            return add_report_write_warning(result, error)
     return result
 
 

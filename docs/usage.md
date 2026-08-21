@@ -103,6 +103,9 @@ repo-archive verify <archive-path> --deep
 repo-archive verify <archive-path> --full --deep
 ```
 
+`--quick` and `--deep` are mutually exclusive because deep verification is the
+slowest and most comprehensive mode.
+
 Quick verification omits Git object, LFS object, and bundle verification. Use
 it for a faster structural and configuration check, not as a substitute for
 periodic full verification:
@@ -141,8 +144,9 @@ repo-archive backup https://github.com/OWNER/REPO.git --root ./archives --bundle
 
 With `--bundle`, the snapshot is requested work: a non-empty repository whose
 snapshot creation fails returns a nonzero overall result even though the
-already validated mirror remains published and usable. Creation failures use
-the general-failure exit code rather than the verification-failure code.
+already validated mirror remains published and usable. Bundle-creation and
+free-space failures use the general-failure exit code; detected integrity
+failures use the verification-failure exit code.
 
 Snapshot creation writes a temporary sibling, creates a bundle with all
 archived refs, independently finds valid LFS pointers throughout the reachable
@@ -169,7 +173,10 @@ OID. A complete snapshot owns all Git and LFS content required to recover its
 included refs without the mutable archive mirror. If the mirror lacks required
 LFS content, creation still publishes a verified `partial` snapshot that owns
 its Git history and reports the exact LFS gap; it never silently falls back to
-the mirror during future recovery.
+the mirror during future recovery. A present object whose content does not
+match its OID is corruption, not an unavailable payload, so it blocks snapshot
+publication. Run an LFS-enabled `backup` or `update` to refetch and verify the
+archive before retrying the snapshot.
 
 A snapshot's logical size is approximately its full Git history plus every
 historical LFS object reachable from its refs. Reflinks or hard links can lower
@@ -179,7 +186,18 @@ hard links may expand deduplicated files but does not reduce completeness.
 Creation also needs transient room for staging and deep verification; peak use
 can include the bundle, LFS payload, and a temporary materialized copy of the
 bundled Git history. A best-effort free-space preflight rejects clearly
-insufficient staging space before payload materialization.
+insufficient staging space before payload materialization. The estimate probes
+same-volume hard-link support and does not charge the logical payload size when
+those links can be used; otherwise it conservatively assumes payload copies.
+
+The manifest keeps a convenience index of published snapshots, but every
+snapshot subtree remains self-describing. If a subtree is manually deleted for
+retention, or publication completes just before an interrupted manifest write,
+`verify` reports the index mismatch as a warning rather than declaring the
+remaining snapshots corrupt. The next successful `snapshot` command rebuilds
+the index from the published `snapshot.json` records. A malformed index shape
+is still a verification failure. Only remove whole timestamped subtrees while
+no archive operation is running.
 
 ## Restore offline
 

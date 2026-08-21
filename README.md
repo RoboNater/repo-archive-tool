@@ -67,8 +67,9 @@ repo-archive restore <archive-path> <destination>
 `verify` performs full Git object, LFS, and snapshot checks by default.
 Use `--quick` for structural and configuration checks that deliberately skip
 those deeper integrity checks. Use `--deep`, optionally with `--full`, to
-materialize each bundle and recompute its historical LFS requirements. Add
-`--json` to any current subcommand for a stable machine-readable result.
+materialize each bundle and recompute its historical LFS requirements;
+`--quick` and `--deep` cannot be combined. Add `--json` to any current
+subcommand for a stable machine-readable result.
 Verification is not read-only: every attempt writes the latest reports, and
 every structurally valid complete or partial verification records its time,
 mode, and outcome in `manifest.json`, so the archive set must remain writable.
@@ -161,7 +162,10 @@ well as the aggregate exit code.
   bundleable content, so snapshot creation reports a warning without failing
   an otherwise successful backup. For a non-empty repository, a requested
   snapshot failure makes `backup --bundle` nonzero while retaining the valid
-  published mirror.
+  published mirror. A present but corrupt LFS object blocks publication; run an
+  LFS-enabled backup or update to refetch it. Manifest-to-disk snapshot-index
+  drift is a verification warning, and the next successful snapshot rebuilds
+  that convenience index from the self-describing published subtrees.
 - Restore: working clones and recovered mirrors can use either `mirror.git` or
   a selected snapshot. A partial source restores Git history and reports its
   exact LFS gap; missing Git LFS tooling leaves pointer files in a working clone

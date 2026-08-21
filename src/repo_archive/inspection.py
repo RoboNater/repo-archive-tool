@@ -247,9 +247,8 @@ def _snapshot_index_component(
         details.append("not indexed: " + ", ".join(unindexed))
     return ComponentResult(
         "snapshot index",
-        ComponentStatus.FAILED,
+        ComponentStatus.WARNING,
         "Manifest snapshot index does not match disk (" + "; ".join(details) + ").",
-        ErrorKind.VERIFICATION,
     )
 
 

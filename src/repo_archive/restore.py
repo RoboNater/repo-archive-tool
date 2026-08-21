@@ -17,7 +17,7 @@ from repo_archive.filesystem import (
 )
 from repo_archive.git import CommandResult, GitRunner
 from repo_archive.manifest import load_manifest
-from repo_archive.reporting import write_latest_reports
+from repo_archive.reporting import add_report_write_warning, write_latest_reports
 from repo_archive.results import (
     ComponentResult,
     ComponentStatus,
@@ -365,12 +365,5 @@ def _record(layout: ArchiveLayout, result: OperationResult) -> OperationResult:
     try:
         write_latest_reports(layout.reports_path, result)
     except OSError as error:
-        return OperationResult(
-            operation=result.operation,
-            archive_path=result.archive_path,
-            components=result.components,
-            warnings=result.warnings
-            + (f"Latest restore reports could not be written: {error}",),
-            errors=result.errors,
-        )
+        return add_report_write_warning(result, error)
     return result

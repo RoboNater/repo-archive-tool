@@ -254,6 +254,8 @@ class GitRunner:
         object_ids: BinaryIO,
         on_blob: Callable[[str, bytes], None],
     ) -> CommandResult:
+        reader_errors: list[BaseException] = []
+        batch_errors: list[str] = []
         with tempfile.TemporaryFile(mode="w+b") as stderr_stream:
             process = subprocess.Popen(
                 command,
@@ -264,45 +266,67 @@ class GitRunner:
                 stdout=subprocess.PIPE,
             )
             assert process.stdout is not None
-            error_message = ""
-            try:
+
+            def consume_stdout() -> None:
+                error_message = ""
                 with process.stdout:
-                    while header_bytes := process.stdout.readline():
-                        header = header_bytes.decode("ascii", errors="replace").strip()
-                        parts = header.split()
-                        if len(parts) == 2 and parts[1] == "missing":
-                            error_message = f"Git object is missing: {parts[0]}"
+                    try:
+                        while header_bytes := process.stdout.readline():
+                            header = header_bytes.decode(
+                                "ascii", errors="replace"
+                            ).strip()
+                            parts = header.split()
+                            if len(parts) == 2 and parts[1] == "missing":
+                                error_message = f"Git object is missing: {parts[0]}"
+                                break
+                            if len(parts) != 3:
+                                error_message = (
+                                    "Git cat-file returned an invalid header."
+                                )
+                                break
+                            oid, object_type, size_text = parts
+                            try:
+                                size = int(size_text)
+                            except ValueError:
+                                error_message = "Git cat-file returned an invalid size."
+                                break
+                            content = process.stdout.read(size)
+                            terminator = process.stdout.read(1)
+                            if len(content) != size or terminator != b"\n":
+                                error_message = (
+                                    "Git cat-file returned truncated content."
+                                )
+                                break
+                            if object_type == "blob":
+                                on_blob(oid, content)
+                    except BaseException as error:
+                        reader_errors.append(error)
+                    finally:
+                        if error_message:
+                            batch_errors.append(error_message)
+                        if reader_errors or batch_errors:
                             process.kill()
-                            break
-                        if len(parts) != 3:
-                            error_message = "Git cat-file returned an invalid header."
-                            process.kill()
-                            break
-                        oid, object_type, size_text = parts
-                        try:
-                            size = int(size_text)
-                        except ValueError:
-                            error_message = "Git cat-file returned an invalid size."
-                            process.kill()
-                            break
-                        content = process.stdout.read(size)
-                        terminator = process.stdout.read(1)
-                        if len(content) != size or terminator != b"\n":
-                            error_message = "Git cat-file returned truncated content."
-                            process.kill()
-                            break
-                        if object_type == "blob":
-                            on_blob(oid, content)
-            except BaseException:
+
+            reader = Thread(target=consume_stdout, daemon=True)
+            reader.start()
+            timed_out = False
+            try:
+                returncode = process.wait(timeout=self.timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
                 process.kill()
-                process.wait()
-                raise
-            returncode = process.wait()
+                returncode = process.wait()
+            reader.join()
             stderr_stream.seek(0)
             stderr = stderr_stream.read().decode("utf-8", errors="replace")
-        if error_message:
+        if reader_errors:
+            raise reader_errors[0]
+        if timed_out:
+            returncode = 124
+            stderr = stderr or "Command timed out."
+        if batch_errors:
             returncode = returncode or 1
-            stderr = stderr or error_message
+            stderr = stderr or batch_errors[0]
         return self._redact_result(CommandResult(command, returncode, "", stderr))
 
     def _finish_result(self, result: CommandResult, *, check: bool) -> CommandResult:
