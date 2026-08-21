@@ -48,11 +48,15 @@ def test_parser_accepts_info_and_verification_modes() -> None:
     update = build_parser().parse_args(["update", "archive", "--no-lfs"])
     quick = build_parser().parse_args(["verify", "archive", "--quick"])
     full = build_parser().parse_args(["verify", "archive", "--full"])
+    deep = build_parser().parse_args(["verify", "archive", "--deep"])
+    snapshot = build_parser().parse_args(["snapshot", "archive", "--json"])
 
     assert info.command == "info"
     assert update.no_lfs is True
     assert quick.quick is True
     assert full.full is True
+    assert deep.deep is True
+    assert snapshot.command == "snapshot"
 
 
 def test_json_flag_emits_only_stable_json(capsys: object) -> None:
@@ -81,7 +85,7 @@ def test_verify_json_emits_only_the_operation_result(capsys: object) -> None:
     assert captured.err == ""
 
 
-def test_backup_persists_the_decorated_cli_result(
+def test_backup_bundle_creates_snapshot_and_persists_combined_result(
     tmp_path: Path, capsys: object
 ) -> None:
     archive_path = tmp_path / "archives" / "project"
@@ -89,6 +93,11 @@ def test_backup_persists_the_decorated_cli_result(
         "backup",
         archive_path,
         components=(ComponentResult("git mirror", ComponentStatus.COMPLETE),),
+    )
+    snapshot_result = OperationResult(
+        "snapshot",
+        archive_path,
+        components=(ComponentResult("bundle", ComponentStatus.COMPLETE),),
     )
     with (
         patch(
@@ -99,28 +108,37 @@ def test_backup_persists_the_decorated_cli_result(
                 "https://example.test/team/repo.git",
                 "--root",
                 str(tmp_path / "archives"),
+                "--name",
+                "project",
                 "--bundle",
                 "--json",
             ],
         ),
         patch("repo_archive.cli.backup_archive", return_value=archive_result),
+        patch(
+            "repo_archive.cli.create_snapshot", return_value=snapshot_result
+        ) as snapshot,
     ):
         assert main() == 0
 
+    snapshot.assert_called_once_with(ArchiveLayout(archive_path), record_result=False)
     emitted = json.loads(capsys.readouterr().out)
     persisted = json.loads(
         (archive_path / "reports" / "latest.json").read_text(encoding="utf-8")
     )
     assert emitted == persisted
-    assert any("--bundle has no effect" in warning for warning in persisted["warnings"])
+    assert persisted["warnings"] == []
+    assert [item["name"] for item in persisted["components"]] == [
+        "git mirror",
+        "bundle",
+    ]
     assert (archive_path / "reports" / "latest.txt").read_text(
         encoding="utf-8"
     ) == render_text(
         OperationResult(
             "backup",
             archive_path,
-            components=archive_result.components,
-            warnings=("--bundle has no effect until snapshot support is implemented.",),
+            components=archive_result.components + snapshot_result.components,
         )
     )
 

@@ -7,10 +7,9 @@ LFS content when needed, and reports submodule dependencies without confusing
 them with complete submodule backups.
 
 The current `0.1.0` development build supports safe mirror backup and update,
-archive inspection, full or quick verification, manifests, operation reports,
-LFS archival, and submodule-awareness reporting. Bundle snapshot creation and
-offline restore are the next planned core capabilities and are not implemented
-yet.
+archive inspection, full, quick, or deep verification, manifests, operation
+reports, LFS archival, submodule-awareness reporting, and self-contained bundle
+snapshots. Offline restore is the next planned core capability.
 
 Early users are welcome to report workflow gaps, unclear output, and platform
 issues in the [GitHub issue tracker](https://github.com/RoboNater/repo-archive-tool/issues).
@@ -61,14 +60,17 @@ Then inspect, verify, and refresh the archive using that path:
 repo-archive info <archive-path>
 repo-archive verify <archive-path>
 repo-archive update <archive-path>
+repo-archive snapshot <archive-path>
 ```
 
-`verify` performs full Git object, LFS, and existing-bundle checks by default.
+`verify` performs full Git object, LFS, and snapshot checks by default.
 Use `--quick` for structural and configuration checks that deliberately skip
-those deeper integrity checks. Add `--json` to any current subcommand for a
-stable machine-readable result. Verification is not read-only: every attempt
-writes the latest reports, and a successful verification also records its time
-and mode in `manifest.json`, so the archive set must remain writable.
+those deeper integrity checks. Use `--deep` to additionally materialize each
+bundle and recompute its historical LFS requirements. Add `--json` to any
+current subcommand for a stable machine-readable result. Verification is not
+read-only: every attempt writes the latest reports, and a successful
+verification also records its time and mode in `manifest.json`, so the archive
+set must remain writable.
 
 See the [usage guide](docs/usage.md) for archive-path examples, all implemented
 options, automation output, reports, exit codes, LFS behavior, submodule
@@ -90,7 +92,11 @@ Each archive set has this layout:
 |-- reports/
 |   |-- latest.json      Structured result of the latest operation attempt
 |   `-- latest.txt       Human-readable result of the latest operation attempt
-|-- snapshots/           Reserved for bundle snapshots
+|-- snapshots/
+|   `-- <UTC-timestamp>/
+|       |-- snapshot.bundle
+|       |-- snapshot.json
+|       `-- lfs/objects/ Snapshot-owned historical LFS payloads
 `-- metadata/            Reserved for provider-specific exports
 ```
 
@@ -129,8 +135,11 @@ well as the aggregate exit code.
 - Submodules: definitions and pinned commits are recorded across archived refs,
   but child repositories are not recursively archived. Detected submodules
   produce `complete-with-warnings`.
-- Bundle snapshots: creation is not implemented. `backup --bundle` is accepted
-  but does no snapshot work and reports a deferred-work warning.
+- Bundle snapshots: `snapshot` and `backup --bundle` create a timestamped,
+  verified recovery subtree. An ordinary Git bundle never contains LFS
+  payloads, so each snapshot separately owns every available historical LFS
+  object reachable from its included refs. Missing objects produce a verified
+  `partial` snapshot with exact unavailable OIDs.
 - Restore: there is no `restore` subcommand yet. The archive mirror is native
   Git storage, but the supported offline working-clone, LFS seeding,
   restore-from-bundle, and recovered-mirror workflows remain planned work.
@@ -145,8 +154,7 @@ well as the aggregate exit code.
   SSH agent instead of embedding secrets in the mirror's `origin` URL.
 
 A deferred-option warning by itself results in `complete-with-warnings` and
-exit `0`; partial or failed components still take precedence. A zero exit code
-does not mean the deferred feature ran.
+exit `0`; partial or failed components still take precedence.
 
 ## Development
 

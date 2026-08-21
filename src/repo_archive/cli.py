@@ -16,7 +16,9 @@ from repo_archive.results import (
     ComponentStatus,
     ErrorKind,
     OperationResult,
+    Outcome,
 )
+from repo_archive.snapshots import create_snapshot
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -43,7 +45,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="intentionally skip LFS object fetching (partial when LFS is detected)",
     )
-    backup.add_argument("--bundle", action="store_true", help="reserved for snapshots")
+    backup.add_argument(
+        "--bundle",
+        action="store_true",
+        help="create a verified snapshot after the archive update",
+    )
     backup.add_argument(
         "--metadata", choices=("github",), help="reserved for metadata export"
     )
@@ -74,8 +80,20 @@ def build_parser() -> argparse.ArgumentParser:
     verification_mode.add_argument(
         "--full", action="store_true", help="verify objects and bundle snapshots"
     )
+    verification_mode.add_argument(
+        "--deep",
+        action="store_true",
+        help="materialize bundles and recompute historical LFS requirements",
+    )
     verify.add_argument("--json", action="store_true", dest="command_json")
     verify.add_argument("--verbose", action="store_true", dest="command_verbose")
+
+    snapshot = subcommands.add_parser(
+        "snapshot", help="create a self-contained bundle and LFS snapshot"
+    )
+    snapshot.add_argument("archive_path", type=Path)
+    snapshot.add_argument("--json", action="store_true", dest="command_json")
+    snapshot.add_argument("--verbose", action="store_true", dest="command_verbose")
     return parser
 
 
@@ -96,6 +114,8 @@ def main() -> int:
             result = backup_archive(
                 arguments.remote_url, layout, lfs_enabled=not arguments.no_lfs
             )
+            if arguments.bundle:
+                result = _add_backup_snapshot(result, layout)
             result = _add_deferred_option_warnings(result, arguments)
     elif arguments.command == "update":
         result = update_archive(
@@ -106,8 +126,13 @@ def main() -> int:
         result = info_archive(ArchiveLayout(arguments.archive_path))
     elif arguments.command == "verify":
         result = verify_archive(
-            ArchiveLayout(arguments.archive_path), full=not arguments.quick
+            ArchiveLayout(arguments.archive_path),
+            full=not arguments.quick,
+            deep=arguments.deep,
         )
+    elif arguments.command == "snapshot":
+        result = create_snapshot(ArchiveLayout(arguments.archive_path))
+        result = _add_deferred_option_warnings(result, arguments)
     else:
         result = OperationResult(
             operation="help",
@@ -145,9 +170,7 @@ def _add_deferred_option_warnings(
     result: OperationResult, arguments: argparse.Namespace
 ) -> OperationResult:
     warnings = list(result.warnings)
-    if arguments.bundle:
-        warnings.append("--bundle has no effect until snapshot support is implemented.")
-    if arguments.metadata:
+    if getattr(arguments, "metadata", None):
         warnings.append("Metadata export is not implemented yet.")
     if getattr(arguments, "verbose", False) or getattr(
         arguments, "command_verbose", False
@@ -161,6 +184,28 @@ def _add_deferred_option_warnings(
         components=result.components,
         warnings=tuple(warnings),
         errors=result.errors,
+    )
+
+
+def _add_backup_snapshot(
+    backup_result: OperationResult, layout: ArchiveLayout
+) -> OperationResult:
+    if backup_result.outcome is Outcome.FAILED:
+        return OperationResult(
+            operation=backup_result.operation,
+            archive_path=backup_result.archive_path,
+            components=backup_result.components,
+            warnings=backup_result.warnings
+            + ("Snapshot creation was skipped because the archive update failed.",),
+            errors=backup_result.errors,
+        )
+    snapshot = create_snapshot(layout, record_result=False)
+    return OperationResult(
+        operation=backup_result.operation,
+        archive_path=backup_result.archive_path,
+        components=backup_result.components + snapshot.components,
+        warnings=backup_result.warnings + snapshot.warnings,
+        errors=backup_result.errors + snapshot.errors,
     )
 
 

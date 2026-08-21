@@ -43,6 +43,7 @@ class Manifest:
                 "created_at": timestamp,
                 "last_updated_at": timestamp,
                 "tool_version": __version__,
+                "snapshots": [],
             },
             git={
                 "status": "not-run",

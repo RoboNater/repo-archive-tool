@@ -2,8 +2,8 @@
 
 `repo-archive-tool` maintains a verified native Git mirror and describes its
 completeness in a manifest and latest-operation reports. The currently shipped
-workflow can create, update, inspect, and verify an archive. Bundle creation and
-offline restore are planned but are not implemented yet.
+workflow can create, update, inspect, verify, and snapshot an archive. Offline
+restore remains planned.
 
 ## Requirements and installation
 
@@ -89,10 +89,17 @@ such as LFS, submodules, and metadata unambiguously.
 `verify` performs full verification by default. It checks archive structure,
 the configured source, refs, manifest consistency, the Git object database with
 `git fsck --full`, archived LFS objects when applicable, and any `.bundle`
-files already present in `snapshots/`:
+self-contained snapshots under `snapshots/`:
 
 ```bash
 repo-archive verify <archive-path> --full
+```
+
+Deep verification also materializes each bundle into a temporary mirror and
+independently recomputes every historical LFS OID reachable from its refs:
+
+```bash
+repo-archive verify <archive-path> --deep
 ```
 
 Quick verification omits Git object, LFS object, and bundle verification. Use
@@ -115,6 +122,49 @@ validated update process as a repeated `backup`:
 ```bash
 repo-archive update <archive-path>
 ```
+
+## Create a snapshot
+
+Create a point-in-time recovery unit from the current mirror:
+
+```bash
+repo-archive snapshot <archive-path>
+```
+
+Or request one immediately after a successful backup/update of the mirror:
+
+```bash
+repo-archive backup https://github.com/OWNER/REPO.git --root ./archives --bundle
+```
+
+Snapshot creation writes a temporary sibling, creates a bundle with all
+archived refs, independently finds valid LFS pointers throughout the reachable
+history, materializes available payloads, verifies the complete subtree, and
+publishes it with one rename. A failed staging or verification attempt is
+removed and never appears as a timestamped snapshot.
+
+Each snapshot has this shape:
+
+```text
+snapshots/<UTC-timestamp>/
+|-- snapshot.bundle
+|-- snapshot.json
+`-- lfs/objects/<aa>/<bb>/<oid>
+```
+
+An ordinary Git bundle does not contain LFS objects. `snapshot.json` records
+the bundle digest and refs plus every required, present, and unavailable LFS
+OID. A complete snapshot owns all Git and LFS content required to recover its
+included refs without the mutable archive mirror. If the mirror lacks required
+LFS content, creation still publishes a verified `partial` snapshot that owns
+its Git history and reports the exact LFS gap; it never silently falls back to
+the mirror during future recovery.
+
+A snapshot's logical size is approximately its full Git history plus every
+historical LFS object reachable from its refs. Reflinks or hard links can lower
+physical use, but storage can approach the full logical size for every
+snapshot. Copying a snapshot with `cp -r`, `tar`, or `rsync` without preserving
+hard links may expand deduplicated files but does not reduce completeness.
 
 ## Output and automation
 
@@ -215,13 +265,15 @@ A current archive set uses this layout:
 |-- reports/
 |   |-- latest.json      Structured result of the latest operation attempt
 |   `-- latest.txt       Human-readable result of the latest operation attempt
-|-- snapshots/           Reserved for bundle snapshots
+|-- snapshots/
+|   `-- <UTC-timestamp>/ Self-contained bundle, record, and LFS payload
 `-- metadata/            Reserved for provider-specific exports
 ```
 
-The mirror remains usable through ordinary Git commands. Do not interpret the
-presence of the reserved `snapshots/` or `metadata/` directories as evidence
-that those components have been archived.
+The mirror remains usable through ordinary Git commands. A timestamped
+snapshot is published only after its record and payload verify. Do not
+interpret the presence of the reserved `metadata/` directory as evidence that
+provider data has been archived.
 
 ## Credentials and sensitive data
 
@@ -245,8 +297,6 @@ embedded credentials. Treat its output as sensitive.
 
 The following capabilities are planned and are not shipped yet:
 
-- Creating bundle snapshots. `backup --bundle` is accepted but performs no
-  snapshot work and reports a deferred-work warning.
 - Restoring a working clone or recovered mirror. There is no `restore`
   subcommand yet.
 - Recursively archiving submodule repositories.

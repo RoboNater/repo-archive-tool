@@ -396,14 +396,14 @@ documentation updated alongside each change.
   [Phase 6 snapshot and restore specification](../../specification-snapshot-for-bundled-snapshots-and-restore.md).
 - [x] Define the snapshot record format, including path, creation timestamp,
   verification outcome, included refs, and LFS relationship.
-- [ ] Implement `snapshot <archive-path>` using a temporary bundle path.
-- [ ] Create bundles containing all intended refs and verify them before atomic
+- [x] Implement `snapshot <archive-path>` using a temporary bundle path.
+- [x] Create bundles containing all intended refs and verify them before atomic
   publication under a unique UTC timestamp.
-- [ ] Make the existing `backup --bundle` option create a verified snapshot
+- [x] Make the existing `backup --bundle` option create a verified snapshot
   after a successful archive update, using the same snapshot implementation.
-- [ ] Record snapshot paths and verification outcomes without weakening atomic
+- [x] Record snapshot paths and verification outcomes without weakening atomic
   manifest and report updates.
-- [ ] State in all relevant output and user documentation that ordinary Git
+- [x] State in all relevant output and user documentation that ordinary Git
   bundles do not contain LFS objects.
 - [ ] Define restore CLI modes before coding, including a normal working clone,
   selection of a bundle snapshot, and a recovered mirror suitable for

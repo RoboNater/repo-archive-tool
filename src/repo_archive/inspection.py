@@ -23,6 +23,7 @@ from repo_archive.results import (
     ErrorKind,
     OperationResult,
 )
+from repo_archive.snapshots import discover_snapshot_paths, verify_snapshot_path
 from repo_archive.submodules import summarize_submodule_definitions
 
 
@@ -46,7 +47,8 @@ def info_archive(
         ComponentResult(
             "snapshots",
             ComponentStatus.COMPLETE,
-            f"{len(_bundle_paths(layout))} bundle snapshots available.",
+            f"{len(discover_snapshot_paths(layout))} self-contained snapshots "
+            "available.",
         ),
         _metadata_component(manifest),
         _verification_component(manifest),
@@ -69,6 +71,7 @@ def verify_archive(
     layout: ArchiveLayout,
     *,
     full: bool = True,
+    deep: bool = False,
     runner: GitRunner | None = None,
 ) -> OperationResult:
     """Verify archive structure and, in full mode, Git object integrity and bundles."""
@@ -125,11 +128,12 @@ def verify_archive(
             )
         )
         components.append(_lfs_verification_component(layout, manifest, runner))
-        components.extend(_verify_bundles(layout, runner))
+        components.extend(_verify_bundles(layout, runner, deep=deep))
 
     result = OperationResult("verify", layout.path, components=tuple(components))
-    if result.outcome.value in {"complete", "complete-with-warnings"}:
-        _write_successful_verification(layout, manifest, "full" if full else "quick")
+    if all(component.status != ComponentStatus.FAILED for component in components):
+        mode = "deep" if deep else ("full" if full else "quick")
+        _write_successful_verification(layout, manifest, mode)
     return _record(layout, result)
 
 
@@ -250,9 +254,12 @@ def _manifest_path_component(
     )
 
 
-def _verify_bundles(layout: ArchiveLayout, runner: GitRunner) -> list[ComponentResult]:
-    paths = _bundle_paths(layout)
-    if not paths:
+def _verify_bundles(
+    layout: ArchiveLayout, runner: GitRunner, *, deep: bool
+) -> list[ComponentResult]:
+    snapshots = discover_snapshot_paths(layout)
+    legacy_paths = _legacy_bundle_paths(layout)
+    if not snapshots and not legacy_paths:
         return [
             ComponentResult(
                 "bundle snapshots",
@@ -260,18 +267,34 @@ def _verify_bundles(layout: ArchiveLayout, runner: GitRunner) -> list[ComponentR
                 "No bundle snapshots to verify.",
             )
         ]
-    return [
+    components: list[ComponentResult] = []
+    for path in snapshots:
+        verified = verify_snapshot_path(path, runner=runner, deep=deep)
+        if verified.outcome == "verified-complete":
+            status = ComponentStatus.COMPLETE
+            kind = None
+        elif verified.outcome == "verified-partial":
+            status = ComponentStatus.PARTIAL
+            kind = None
+        else:
+            status = ComponentStatus.FAILED
+            kind = ErrorKind.VERIFICATION
+        components.append(
+            ComponentResult(f"snapshot {path.name}", status, verified.message, kind)
+        )
+    components.extend(
         _command_component(
             f"bundle {path.name}",
             runner.git("bundle", "verify", str(path), cwd=layout.mirror_path),
             ErrorKind.VERIFICATION,
             f"Bundle {path.name} verified.",
         )
-        for path in paths
-    ]
+        for path in legacy_paths
+    )
+    return components
 
 
-def _bundle_paths(layout: ArchiveLayout) -> list[Path]:
+def _legacy_bundle_paths(layout: ArchiveLayout) -> list[Path]:
     if not layout.snapshots_path.is_dir():
         return []
     return sorted(layout.snapshots_path.glob("*.bundle"))
