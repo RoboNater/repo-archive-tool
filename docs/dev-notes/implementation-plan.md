@@ -1,7 +1,7 @@
 # repo-archive-tool Implementation Plan
 
 **Status:** In progress
-**Last reviewed:** 2026-08-18
+**Last reviewed:** 2026-08-21
 **Governing specification:** [`repo-archive-tool-spec.md`](../../repo-archive-tool-spec.md)
 
 This is the working implementation plan for `repo-archive-tool`. Keep it aligned with the repository as design decisions are made and phases are completed. The specification defines product requirements; this document records the intended implementation sequence and current project state.
@@ -46,6 +46,11 @@ This is the working implementation plan for `repo-archive-tool`. Keep it aligned
   snapshot and restore work so early adopters can provide feedback. After that
   baseline is published, every implementation phase must update affected user
   documentation and automated tests in the same change.
+- Treat each immutable snapshot as a self-contained recovery subtree owning its
+  bundle and full-history LFS payload. Permit reflink, hard-link, and copy
+  materialization without creating a restoration dependency on the mirror or
+  another snapshot. The normative contract is in
+  [`specification-snapshot-for-bundled-snapshots-and-restore.md`](../../specification-snapshot-for-bundled-snapshots-and-restore.md).
 
 ## Target Project Structure
 
@@ -57,6 +62,7 @@ repo-archive-tool/
 |-- pyproject.toml
 |-- uv.lock
 |-- repo-archive-tool-spec.md
+|-- specification-snapshot-for-bundled-snapshots-and-restore.md
 |-- docs/
 |   |-- usage.md
 |   `-- dev-notes/
@@ -380,10 +386,11 @@ Resolve the snapshot and restore contracts before implementation, then deliver
 them as separately reviewable snapshot and restore changes with tests and user
 documentation updated alongside each change.
 
-- [ ] Decide and document whether an immutable snapshot owns a snapshot-specific
+- [x] Decide and document whether an immutable snapshot owns a snapshot-specific
   LFS payload or relies on the archive set's shared LFS store. State the
-  resulting point-in-time and portability guarantees explicitly.
-- [ ] Define the snapshot record format, including path, creation timestamp,
+  resulting point-in-time and portability guarantees explicitly in the
+  [Phase 6 snapshot and restore specification](../../specification-snapshot-for-bundled-snapshots-and-restore.md).
+- [x] Define the snapshot record format, including path, creation timestamp,
   verification outcome, included refs, and LFS relationship.
 - [ ] Implement `snapshot <archive-path>` using a temporary bundle path.
 - [ ] Create bundles containing all intended refs and verify them before atomic
