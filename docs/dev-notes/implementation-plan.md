@@ -15,7 +15,7 @@ This is the working implementation plan for `repo-archive-tool`. Keep it aligned
 - [x] LFS-aware archival implemented.
 - [x] Submodule awareness and incompleteness reporting implemented.
 - [x] Current-capability usage and project documentation completed.
-- [ ] Bundle snapshots and offline restore implemented.
+- [x] Bundle snapshots and offline restore implemented.
 
 ## Implementation Decisions
 
@@ -405,24 +405,47 @@ documentation updated alongside each change.
   manifest and report updates.
 - [x] State in all relevant output and user documentation that ordinary Git
   bundles do not contain LFS objects.
-- [ ] Define restore CLI modes before coding, including a normal working clone,
+- [x] Define restore CLI modes before coding, including a normal working clone,
   selection of a bundle snapshot, and a recovered mirror suitable for
   `git push --mirror`.
-- [ ] Implement `restore <archive-path> <destination>` as an offline normal
+
+  **Restore CLI contract (2026-08-21):**
+  `restore <archive-path> <destination>` creates an offline normal working
+  clone from `mirror.git`; `--snapshot <UTC-timestamp>` selects that immutable
+  snapshot subtree instead; and `--mirror` produces a recovered bare mirror
+  from either source. Snapshot identifiers are single directory names under
+  `snapshots/`, not arbitrary paths. Every mode rejects an existing
+  destination, stages on the destination volume, seeds only local verified LFS
+  payloads, validates the result, and publishes it with one rename. A partial
+  source may publish usable Git history but must retain and report its exact
+  LFS gap.
+- [x] Implement `restore <archive-path> <destination>` as an offline normal
   clone from `mirror.git`.
-- [ ] Seed restored repositories with archived LFS objects and perform the
+- [x] Seed restored repositories with archived LFS objects and perform the
   supported local LFS checkout flow without requiring the source remote.
-- [ ] Support restoration from a selected bundle.
-- [ ] Support producing a recovered mirror suitable for `git push --mirror` to
+- [x] Support restoration from a selected bundle.
+- [x] Support producing a recovered mirror suitable for `git push --mirror` to
   a replacement remote.
-- [ ] Refuse existing or unsafe destination overwrites. Build restores in a
+- [x] Refuse existing or unsafe destination overwrites. Build restores in a
   temporary sibling and publish the destination only after clone, LFS seeding,
   checkout, and validation succeed; clean up failed staging safely.
-- [ ] Add unit and integration coverage for bundle creation, verification,
+- [x] Add unit and integration coverage for bundle creation, verification,
   atomic publication, destination safety, offline mirror and bundle restores,
   recovered mirrors, and conditional LFS restoration.
-- [ ] Update `README.md` and `docs/usage.md` in the same changes with the final
+- [x] Update `README.md` and `docs/usage.md` in the same changes with the final
   snapshot and restore syntax, guarantees, examples, and limitations.
+
+**Phase 6 completed 2026-08-21:** Snapshot creation publishes a versioned
+record, verified all-ref bundle, and independently enumerated full-history LFS
+payload under one timestamped subtree. Routine verification hashes the bundle
+and payload inventory, while `verify --deep` materializes bundle history and
+recomputes required LFS OIDs. `backup --bundle` uses the same implementation.
+Restore stages and validates offline working clones or recovered mirrors from
+either the mutable mirror or one selected snapshot, seeds only locally verified
+LFS payloads, reports exact gaps, refuses overwrites, and cleans failed staging.
+Local integration coverage includes both Git sources, both destination modes,
+atomic failure behavior, republishing with `git push --mirror`, declared-partial
+LFS recovery, and a conditional real Git LFS checkout.
 
 **Exit criterion:** A disconnected archive can produce a verified bundle, a
 normal working clone, an LFS-aware checkout where applicable, and a mirror that
@@ -454,10 +477,10 @@ introduces each behavior.
 
 ### Final acceptance work
 
-- [ ] Confirm automated coverage for bundle creation and verification.
-- [ ] Confirm offline restoration from both a mirror and a selected bundle.
-- [ ] Confirm recovered-mirror behavior suitable for `git push --mirror`.
-- [ ] Confirm conditional LFS archive and restore tests run when Git LFS is
+- [x] Confirm automated coverage for bundle creation and verification.
+- [x] Confirm offline restoration from both a mirror and a selected bundle.
+- [x] Confirm recovered-mirror behavior suitable for `git push --mirror`.
+- [x] Confirm conditional LFS archive and restore tests run when Git LFS is
   installed and skip clearly otherwise.
 - [ ] Keep network-dependent tests separate from the default suite.
 - [ ] Exercise create -> update -> verify -> snapshot -> offline restore in one

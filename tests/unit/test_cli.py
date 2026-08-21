@@ -50,6 +50,9 @@ def test_parser_accepts_info_and_verification_modes() -> None:
     full = build_parser().parse_args(["verify", "archive", "--full"])
     deep = build_parser().parse_args(["verify", "archive", "--deep"])
     snapshot = build_parser().parse_args(["snapshot", "archive", "--json"])
+    restore = build_parser().parse_args(
+        ["restore", "archive", "destination", "--snapshot", "stamp", "--mirror"]
+    )
 
     assert info.command == "info"
     assert update.no_lfs is True
@@ -57,6 +60,8 @@ def test_parser_accepts_info_and_verification_modes() -> None:
     assert full.full is True
     assert deep.deep is True
     assert snapshot.command == "snapshot"
+    assert restore.snapshot == "stamp"
+    assert restore.mirror is True
 
 
 def test_json_flag_emits_only_stable_json(capsys: object) -> None:
@@ -198,3 +203,38 @@ def test_update_forwards_no_lfs(tmp_path: Path, capsys: object) -> None:
 
     update.assert_called_once_with(ArchiveLayout(archive_path), lfs_enabled=False)
     assert json.loads(capsys.readouterr().out)["outcome"] == "partial"
+
+
+def test_restore_forwards_source_and_mode(tmp_path: Path, capsys: object) -> None:
+    archive_path = tmp_path / "archive"
+    destination = tmp_path / "restored.git"
+    result = OperationResult(
+        "restore",
+        archive_path,
+        components=(ComponentResult("git restore", ComponentStatus.COMPLETE),),
+    )
+    with (
+        patch(
+            "sys.argv",
+            [
+                "repo-archive",
+                "restore",
+                str(archive_path),
+                str(destination),
+                "--snapshot",
+                "2026-08-21T150000.000000Z",
+                "--mirror",
+                "--json",
+            ],
+        ),
+        patch("repo_archive.cli.restore_archive", return_value=result) as restore,
+    ):
+        assert main() == 0
+
+    restore.assert_called_once_with(
+        ArchiveLayout(archive_path),
+        destination,
+        snapshot="2026-08-21T150000.000000Z",
+        recovered_mirror=True,
+    )
+    assert json.loads(capsys.readouterr().out)["operation"] == "restore"

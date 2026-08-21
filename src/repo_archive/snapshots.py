@@ -368,6 +368,8 @@ def _materialize_lfs_payload(
 
 
 def _verify_lfs_record(snapshot_path: Path, lfs: dict[str, Any]) -> None:
+    if lfs["objects_path"] != "lfs/objects":
+        raise SnapshotError("Snapshot LFS object path is invalid.")
     required = set(lfs["required_oids"])
     present = set(lfs["present_oids"])
     unavailable = set(lfs["unavailable_oids"])
@@ -477,18 +479,16 @@ def _parse_lfs_pointer(content: str) -> str | None:
     lines = content.splitlines()
     if not lines or lines[0] != "version https://git-lfs.github.com/spec/v1":
         return None
-    oid: str | None = None
-    size_seen = False
-    for line in lines[1:]:
-        oid_match = _OID_LINE.fullmatch(line)
-        size_match = _SIZE_LINE.fullmatch(line)
-        if oid_match and oid is None:
-            oid = oid_match.group(1).lower()
-        elif size_match and not size_seen:
-            size_seen = True
-        elif not _EXTENSION_LINE.fullmatch(line):
-            return None
-    return oid if oid is not None and size_seen else None
+    index = 1
+    while index < len(lines) and _EXTENSION_LINE.fullmatch(lines[index]):
+        index += 1
+    if index + 2 != len(lines):
+        return None
+    oid_match = _OID_LINE.fullmatch(lines[index])
+    size_match = _SIZE_LINE.fullmatch(lines[index + 1])
+    if oid_match is None or size_match is None:
+        return None
+    return oid_match.group(1).lower()
 
 
 def _link_or_copy(source: Path, destination: Path) -> str:

@@ -11,6 +11,7 @@ from repo_archive.archive import ArchiveLayout, backup_archive, update_archive
 from repo_archive.inspection import info_archive, verify_archive
 from repo_archive.remote import derive_archive_path, normalize_remote
 from repo_archive.reporting import emit_result, write_latest_reports
+from repo_archive.restore import restore_archive
 from repo_archive.results import (
     ComponentResult,
     ComponentStatus,
@@ -94,6 +95,22 @@ def build_parser() -> argparse.ArgumentParser:
     snapshot.add_argument("archive_path", type=Path)
     snapshot.add_argument("--json", action="store_true", dest="command_json")
     snapshot.add_argument("--verbose", action="store_true", dest="command_verbose")
+
+    restore = subcommands.add_parser(
+        "restore", help="restore an offline working clone or recovered mirror"
+    )
+    restore.add_argument("archive_path", type=Path)
+    restore.add_argument("destination", type=Path)
+    restore.add_argument(
+        "--snapshot", help="UTC snapshot directory name instead of the current mirror"
+    )
+    restore.add_argument(
+        "--mirror",
+        action="store_true",
+        help="create a recovered bare mirror suitable for git push --mirror",
+    )
+    restore.add_argument("--json", action="store_true", dest="command_json")
+    restore.add_argument("--verbose", action="store_true", dest="command_verbose")
     return parser
 
 
@@ -132,6 +149,14 @@ def main() -> int:
         )
     elif arguments.command == "snapshot":
         result = create_snapshot(ArchiveLayout(arguments.archive_path))
+        result = _add_deferred_option_warnings(result, arguments)
+    elif arguments.command == "restore":
+        result = restore_archive(
+            ArchiveLayout(arguments.archive_path),
+            arguments.destination,
+            snapshot=arguments.snapshot,
+            recovered_mirror=arguments.mirror,
+        )
         result = _add_deferred_option_warnings(result, arguments)
     else:
         result = OperationResult(

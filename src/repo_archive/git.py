@@ -6,9 +6,10 @@ the installed Git executables instead of a Python implementation of Git.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import tempfile
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Thread
@@ -59,6 +60,7 @@ class GitRunner:
         cwd: Path | str | None = None,
         check: bool = False,
         input_text: str | None = None,
+        environment: Mapping[str, str] | None = None,
     ) -> CommandResult:
         """Run Git with *arguments* and return its captured result."""
         return self._run(
@@ -67,6 +69,7 @@ class GitRunner:
             cwd=cwd,
             check=check,
             input_text=input_text,
+            environment=environment,
         )
 
     def lfs(
@@ -75,6 +78,7 @@ class GitRunner:
         cwd: Path | str | None = None,
         check: bool = False,
         input_text: str | None = None,
+        environment: Mapping[str, str] | None = None,
     ) -> CommandResult:
         """Run Git LFS with *arguments* and return its captured result."""
         return self._run(
@@ -83,6 +87,7 @@ class GitRunner:
             cwd=cwd,
             check=check,
             input_text=input_text,
+            environment=environment,
         )
 
     def git_stream_stdout(
@@ -113,6 +118,7 @@ class GitRunner:
         cwd: Path | str | None,
         check: bool,
         input_text: str | None,
+        environment: Mapping[str, str] | None,
     ) -> CommandResult:
         command = (executable, *arguments)
         try:
@@ -123,6 +129,9 @@ class GitRunner:
                 check=False,
                 encoding="utf-8",
                 errors="replace",
+                env=(
+                    {**os.environ, **environment} if environment is not None else None
+                ),
                 input=input_text,
                 shell=False,
                 text=True,

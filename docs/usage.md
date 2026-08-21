@@ -2,8 +2,7 @@
 
 `repo-archive-tool` maintains a verified native Git mirror and describes its
 completeness in a manifest and latest-operation reports. The currently shipped
-workflow can create, update, inspect, verify, and snapshot an archive. Offline
-restore remains planned.
+workflow can create, update, inspect, verify, snapshot, and restore an archive.
 
 ## Requirements and installation
 
@@ -166,6 +165,54 @@ physical use, but storage can approach the full logical size for every
 snapshot. Copying a snapshot with `cp -r`, `tar`, or `rsync` without preserving
 hard links may expand deduplicated files but does not reduce completeness.
 
+## Restore offline
+
+Restore a normal working clone from the mutable archive mirror:
+
+```bash
+repo-archive restore <archive-path> <destination>
+```
+
+This reads only `mirror.git`; it does not contact the mirror's configured
+source remote. To use an immutable recovery unit instead, select its UTC
+directory name:
+
+```bash
+repo-archive restore <archive-path> <destination> --snapshot 2026-08-21T140000.000000Z
+```
+
+Snapshot selection accepts a single timestamp directory name under
+`snapshots/`, never an arbitrary filesystem path. The selected subtree is the
+only archived recovery data required: snapshot restore still works if the
+mutable mirror and archive manifest are unavailable.
+
+Add `--mirror` to either command to create a recovered bare mirror:
+
+```bash
+repo-archive restore <archive-path> <destination.git> --mirror
+repo-archive restore <archive-path> <destination.git> --snapshot 2026-08-21T140000.000000Z --mirror
+git -C <destination.git> push --mirror <replacement-remote>
+```
+
+Every restore refuses an existing destination. It clones into a temporary
+sibling on the destination volume, copies verified LFS objects into the staged
+repository, checks out a working tree locally when requested, runs Git object
+validation, and publishes the destination with one rename. A failed restore
+removes staging and leaves the destination absent.
+
+For a working clone, Git LFS smudging is disabled during the Git checkout so it
+cannot fetch from a remote. The tool seeds the local LFS store and then runs
+`git lfs checkout`, which uses those local objects without downloading. Missing
+Git LFS tooling or unavailable payloads produce a partial result and leave
+pointer files where content cannot be materialized. A partial snapshot or
+mirror still restores Git history and lists every unavailable historical OID
+in the result. A recovered mirror carries the verified LFS store but needs no
+working-tree checkout.
+
+The restored repository keeps the local mirror or bundle as `origin`. Change
+it explicitly after recovery when the restored working clone should track a
+new remote.
+
 ## Output and automation
 
 Human output lists each component and ends with the aggregate result. Add
@@ -297,8 +344,6 @@ embedded credentials. Treat its output as sensitive.
 
 The following capabilities are planned and are not shipped yet:
 
-- Restoring a working clone or recovered mirror. There is no `restore`
-  subcommand yet.
 - Recursively archiving submodule repositories.
 - Exporting GitHub or other provider metadata. `backup --metadata github` is
   accepted but performs no export and reports a deferred-work warning.

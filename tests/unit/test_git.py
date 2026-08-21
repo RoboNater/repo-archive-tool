@@ -46,6 +46,7 @@ def test_git_captures_a_successful_command(mock_run: Mock) -> None:
         check=False,
         encoding="utf-8",
         errors="replace",
+        env=None,
         input=None,
         shell=False,
         text=True,
@@ -78,6 +79,17 @@ def test_lfs_uses_its_configured_executable(mock_run: Mock) -> None:
     GitRunner(git_lfs_executable="custom-lfs").lfs("fetch", "--all")
 
     assert mock_run.call_args.args[0] == ("custom-lfs", "fetch", "--all")
+
+
+@patch("repo_archive.git.subprocess.run")
+def test_git_merges_command_environment(mock_run: Mock) -> None:
+    mock_run.return_value = subprocess.CompletedProcess(
+        args=("git", "checkout"), returncode=0, stdout="", stderr=""
+    )
+
+    GitRunner().git("checkout", environment={"GIT_LFS_SKIP_SMUDGE": "1"})
+
+    assert mock_run.call_args.kwargs["env"]["GIT_LFS_SKIP_SMUDGE"] == "1"
 
 
 @patch("repo_archive.git.subprocess.run", side_effect=FileNotFoundError)

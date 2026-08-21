@@ -8,8 +8,8 @@ them with complete submodule backups.
 
 The current `0.1.0` development build supports safe mirror backup and update,
 archive inspection, full, quick, or deep verification, manifests, operation
-reports, LFS archival, submodule-awareness reporting, and self-contained bundle
-snapshots. Offline restore is the next planned core capability.
+reports, LFS archival, submodule-awareness reporting, self-contained bundle
+snapshots, and staged offline restore to working clones or recovered mirrors.
 
 Early users are welcome to report workflow gaps, unclear output, and platform
 issues in the [GitHub issue tracker](https://github.com/RoboNater/repo-archive-tool/issues).
@@ -61,6 +61,7 @@ repo-archive info <archive-path>
 repo-archive verify <archive-path>
 repo-archive update <archive-path>
 repo-archive snapshot <archive-path>
+repo-archive restore <archive-path> <destination>
 ```
 
 `verify` performs full Git object, LFS, and snapshot checks by default.
@@ -109,6 +110,21 @@ last-successful timestamps.
 The mirror remains an ordinary bare Git repository that can be inspected with
 normal Git commands independently of this tool.
 
+## Offline restore
+
+Restore a normal working clone from the current mirror without contacting its
+source remote:
+
+```bash
+repo-archive restore <archive-path> <destination>
+```
+
+Use `--snapshot <UTC-timestamp>` to restore from that immutable snapshot, or
+add `--mirror` to either source mode to produce a recovered bare mirror suitable
+for `git push --mirror <replacement-remote>`. Restores seed verified local LFS
+payloads before running the local checkout, stage beside the destination, and
+publish only after validation. Existing destinations are never overwritten.
+
 ## Completeness and exit status
 
 Operations aggregate independently reported components into four outcomes:
@@ -140,9 +156,11 @@ well as the aggregate exit code.
   payloads, so each snapshot separately owns every available historical LFS
   object reachable from its included refs. Missing objects produce a verified
   `partial` snapshot with exact unavailable OIDs.
-- Restore: there is no `restore` subcommand yet. The archive mirror is native
-  Git storage, but the supported offline working-clone, LFS seeding,
-  restore-from-bundle, and recovered-mirror workflows remain planned work.
+- Restore: working clones and recovered mirrors can use either `mirror.git` or
+  a selected snapshot. A partial source restores Git history and reports its
+  exact LFS gap; missing Git LFS tooling leaves pointer files in a working clone
+  and reports a partial checkout. Restored repositories retain the local
+  recovery source as `origin`; explicitly set a new remote when ready.
 - Provider metadata: issues, pull requests, releases, Actions data, settings,
   and similar host data are not exported. `backup --metadata github` is
   accepted but does no export and reports a deferred-work warning.
@@ -176,6 +194,7 @@ run when Git LFS is installed and otherwise skip explicitly.
 
 - [Detailed usage guide](docs/usage.md)
 - [Product specification](repo-archive-tool-spec.md)
+- [Snapshot and restore contract](specification-snapshot-for-bundled-snapshots-and-restore.md)
 - [Implementation plan and roadmap](docs/dev-notes/implementation-plan.md)
 - [MIT license](LICENSE)
 - [Feedback and bug reports](https://github.com/RoboNater/repo-archive-tool/issues)

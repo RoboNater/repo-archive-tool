@@ -19,3 +19,11 @@ def test_valid_lfs_pointer_is_parsed() -> None:
 
 def test_invalid_lfs_pointer_is_rejected() -> None:
     assert _parse_lfs_pointer("oid sha256:" + "a" * 64) is None
+    assert (
+        _parse_lfs_pointer(
+            "version https://git-lfs.github.com/spec/v1\n"
+            "size 42\n"
+            f"oid sha256:{'a' * 64}\n"
+        )
+        is None
+    )
