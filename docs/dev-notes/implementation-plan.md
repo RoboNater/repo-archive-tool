@@ -462,10 +462,9 @@ LFS recovery, and a conditional real Git LFS checkout.
 creation with a warning; bundle-creation failures use general rather than
 verification exit status. Historical LFS pointer discovery streams the object
 walk and uses two `cat-file` batch processes instead of one process per small
-blob. Snapshot
-creation performs a best-effort space preflight, treats corrupt archived LFS
-payloads as publication-blocking integrity failures, and disables further
-reflink attempts after the first same-filesystem failure. Verification
+blob. Snapshot creation performs a best-effort space preflight, treats corrupt
+archived LFS payloads as publication-blocking integrity failures, and disables
+further reflink attempts after the first same-filesystem failure. Verification
 reconciles the manifest index with published subtrees and records complete or
 declared-partial outcomes explicitly. Restore reports missing snapshot IDs as
 configuration errors, tolerates unwritable report media after publishing, and
@@ -485,6 +484,15 @@ report persistence return structured results on write failures, report-warning
 deduplication uses one shared helper, and batched blob reads honor the runner's
 timeout. Corrupt archived LFS content remains publication-blocking by contract,
 with the refetch remedy and integrity-specific exit behavior documented.
+
+**Phase 6 publication-boundary hardening 2026-08-21:** The verified subtree
+rename is now the snapshot publication commit point. A later manifest-index
+write failure returns success with a warning naming the published path instead
+of misreporting the snapshot as failed. Index rebuild warnings name unreadable
+or invalid existing records, and verification rejects unexpected root entries.
+Permission-denied staging setup maps to configuration exit 2 while disk and
+other I/O failures retain general failure semantics. The normative Phase 6
+contract and user documentation describe the non-transactional index boundary.
 
 **Exit criterion:** A disconnected archive can produce a verified bundle, a
 normal working clone, an LFS-aware checkout where applicable, and a mirror that

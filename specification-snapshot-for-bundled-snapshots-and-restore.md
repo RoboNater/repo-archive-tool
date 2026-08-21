@@ -90,6 +90,12 @@ All recorded paths must be relative to the snapshot subtree.
   the complete staged subtree before publication.
 - Publish with one same-volume rename to the unique timestamped destination.
 - Update archive-level snapshot indexes, manifests, and reports atomically.
+- Treat that rename as the snapshot publication commit point. Index and report
+  files are each replaced atomically but cannot form one filesystem transaction
+  with the snapshot directory. If a later index write fails, report the
+  published path and index drift as a warning rather than claiming snapshot
+  creation failed; a later successful snapshot operation may rebuild the index
+  from published records.
 - Remove failed staging safely. Never replace or expose a final snapshot after
   a creation, materialization, or verification failure.
 
@@ -116,6 +122,7 @@ LFS OIDs from the included refs before publication.
 
 Verification of an already-published snapshot must:
 
+- reject unexpected entries at the snapshot subtree root;
 - run `git bundle verify` and confirm the bundle refs match `snapshot.json`;
 - SHA-256 hash every present LFS object rather than check presence alone; and
 - confirm that the recorded present and unavailable sets exactly match the

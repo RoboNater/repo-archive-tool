@@ -16,7 +16,7 @@ from typing import Any
 from repo_archive.archive import ArchiveLayout
 from repo_archive.filesystem import safe_sha256_file, sha256_file, try_reflink
 from repo_archive.git import CommandResult, GitRunner
-from repo_archive.manifest import load_manifest, write_json_atomic
+from repo_archive.manifest import Manifest, load_manifest, write_json_atomic
 from repo_archive.reporting import add_report_write_warning, write_latest_reports
 from repo_archive.results import (
     ComponentResult,
@@ -169,10 +169,8 @@ def create_snapshot(
 
         staging_path.rename(final_path)
         relative_path = final_path.relative_to(layout.path).as_posix()
-        archive = dict(manifest.archive)
-        archive["snapshots"] = _rebuild_snapshot_index(layout)
-        write_json_atomic(
-            layout.manifest_path, replace(manifest, archive=archive).to_dict()
+        index_component = _update_snapshot_index(
+            layout, manifest, published_path=relative_path
         )
     except (OSError, SnapshotError, ValueError) as error:
         message = _snapshot_error_message(error)
@@ -183,7 +181,7 @@ def create_snapshot(
                 layout,
                 "snapshot",
                 message,
-                error.kind if isinstance(error, SnapshotError) else ErrorKind.GENERAL,
+                _snapshot_error_kind(error),
             ),
             record_result,
         )
@@ -219,9 +217,7 @@ def create_snapshot(
                 ComponentStatus.COMPLETE,
                 f"Snapshot publication passed as {verification_outcome}.",
             ),
-            ComponentResult(
-                "manifest", ComponentStatus.COMPLETE, "Snapshot index updated."
-            ),
+            index_component,
         ),
     )
     return _record(layout, result, record_result)
@@ -297,6 +293,7 @@ def verify_snapshot_path(
     """Verify a published or staged snapshot subtree against its record."""
     runner = runner or GitRunner()
     try:
+        _verify_snapshot_root(snapshot_path)
         record = _load_snapshot_record(snapshot_path / "snapshot.json")
         bundle_path = _record_path(snapshot_path, record["bundle"]["path"])
         if not bundle_path.is_file():
@@ -529,6 +526,20 @@ def _verify_lfs_record(snapshot_path: Path, lfs: dict[str, Any]) -> None:
         raise SnapshotError("Snapshot LFS status is inconsistent.")
 
 
+def _verify_snapshot_root(snapshot_path: Path) -> None:
+    allowed = {"snapshot.bundle", "snapshot.json", "lfs"}
+    unexpected = sorted(
+        path.name for path in snapshot_path.iterdir() if path.name not in allowed
+    )
+    if unexpected:
+        raise SnapshotError(
+            "Snapshot root contains unexpected entries: " + ", ".join(unexpected)
+        )
+    lfs_path = snapshot_path / "lfs"
+    if lfs_path.exists() and not lfs_path.is_dir():
+        raise SnapshotError("Snapshot root lfs entry is not a directory.")
+
+
 def _load_snapshot_record(path: Path) -> dict[str, Any]:
     with path.open(encoding="utf-8") as stream:
         value = json.load(stream)
@@ -627,16 +638,50 @@ def _unique_snapshot_identity(
     raise OSError("Could not allocate a unique UTC snapshot timestamp.")
 
 
-def _rebuild_snapshot_index(layout: ArchiveLayout) -> list[dict[str, object]]:
+def _update_snapshot_index(
+    layout: ArchiveLayout, manifest: Manifest, *, published_path: str
+) -> ComponentResult:
+    try:
+        entries, skipped = _rebuild_snapshot_index(layout)
+        archive = dict(manifest.archive)
+        archive["snapshots"] = entries
+        write_json_atomic(
+            layout.manifest_path, replace(manifest, archive=archive).to_dict()
+        )
+    except (KeyError, OSError, TypeError, ValueError) as error:
+        return ComponentResult(
+            "manifest",
+            ComponentStatus.WARNING,
+            f"Snapshot was published at {published_path}, but its manifest index "
+            f"could not be updated: {error}",
+        )
+    if skipped:
+        return ComponentResult(
+            "manifest",
+            ComponentStatus.WARNING,
+            "Snapshot index updated after publishing "
+            f"{published_path}, but existing snapshot records were skipped: "
+            + "; ".join(skipped),
+        )
+    return ComponentResult(
+        "manifest", ComponentStatus.COMPLETE, "Snapshot index updated."
+    )
+
+
+def _rebuild_snapshot_index(
+    layout: ArchiveLayout,
+) -> tuple[list[dict[str, object]], tuple[str, ...]]:
     entries: list[dict[str, object]] = []
+    skipped: list[str] = []
     for snapshot_path in discover_snapshot_paths(layout):
+        relative_path = snapshot_path.relative_to(layout.path).as_posix()
         try:
             record = load_snapshot_record(snapshot_path)
             bundle = record["bundle"]
             lfs = record["lfs"]
             entries.append(
                 {
-                    "path": snapshot_path.relative_to(layout.path).as_posix(),
+                    "path": relative_path,
                     "created_at": record["created_at"],
                     "status": record["status"],
                     "verification": record["verification"],
@@ -646,9 +691,9 @@ def _rebuild_snapshot_index(layout: ArchiveLayout) -> list[dict[str, object]]:
                     "unavailable_lfs_oids": lfs["unavailable_oids"],
                 }
             )
-        except (KeyError, OSError, TypeError, ValueError):
-            continue
-    return entries
+        except (KeyError, OSError, TypeError, ValueError) as error:
+            skipped.append(f"{relative_path} ({error})")
+    return entries, tuple(skipped)
 
 
 def _command_message(command: CommandResult) -> str:
@@ -665,6 +710,16 @@ def _snapshot_error_message(error: OSError | SnapshotError | ValueError) -> str:
     ):
         return "Snapshot staging ran out of disk space; no snapshot was published."
     return str(error)
+
+
+def _snapshot_error_kind(
+    error: OSError | SnapshotError | ValueError,
+) -> ErrorKind:
+    if isinstance(error, SnapshotError):
+        return error.kind
+    if isinstance(error, PermissionError):
+        return ErrorKind.CONFIGURATION
+    return ErrorKind.GENERAL
 
 
 def _failure(

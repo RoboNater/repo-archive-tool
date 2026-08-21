@@ -197,7 +197,12 @@ retention, or publication completes just before an interrupted manifest write,
 remaining snapshots corrupt. The next successful `snapshot` command rebuilds
 the index from the published `snapshot.json` records. A malformed index shape
 is still a verification failure. Only remove whole timestamped subtrees while
-no archive operation is running.
+no archive operation is running. The subtree rename is the publication commit
+point: if the later manifest-index write fails, `snapshot` returns
+`complete-with-warnings` and names the published path rather than incorrectly
+claiming that no snapshot was created. Rebuild warnings also name any existing
+record that could not be read. Snapshot verification rejects unexpected files
+or directories at the subtree root.
 
 ## Restore offline
 

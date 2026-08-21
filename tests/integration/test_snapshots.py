@@ -15,9 +15,13 @@ from repo_archive.archive import ArchiveLayout, backup_archive
 from repo_archive.filesystem import remove_readonly, safe_sha256_file
 from repo_archive.git import CommandResult, GitRunner
 from repo_archive.inspection import verify_archive
-from repo_archive.manifest import load_manifest
+from repo_archive.manifest import load_manifest, write_json_atomic
 from repo_archive.results import Outcome
-from repo_archive.snapshots import create_snapshot, verify_snapshot_path
+from repo_archive.snapshots import (
+    create_snapshot,
+    load_snapshot_record,
+    verify_snapshot_path,
+)
 
 
 class CountingBatchRunner(GitRunner):
@@ -283,7 +287,41 @@ def test_unwritable_snapshot_staging_is_a_structured_failure(tmp_path: Path) -> 
         result = create_snapshot(layout, record_result=False)
 
     assert result.outcome is Outcome.FAILED
+    assert result.exit_code == 2
     assert "read-only archive" in result.errors[0]
+
+
+def test_manifest_index_failure_warns_after_snapshot_publication(
+    tmp_path: Path,
+) -> None:
+    remote, _ = create_remote(tmp_path)
+    layout = ArchiveLayout(tmp_path / "archives" / "project")
+    assert backup_archive(str(remote), layout).outcome is Outcome.COMPLETE
+
+    def fail_manifest_index(path: Path, value: object) -> None:
+        if path == layout.manifest_path:
+            raise PermissionError("read-only manifest")
+        write_json_atomic(path, value)
+
+    with patch(
+        "repo_archive.snapshots.write_json_atomic", side_effect=fail_manifest_index
+    ):
+        result = create_snapshot(
+            layout,
+            created_at=datetime(2026, 8, 21, 14, 0, tzinfo=UTC),
+            record_result=False,
+        )
+
+    snapshot_path = layout.snapshots_path / "2026-08-21T140000.000000Z"
+    assert result.outcome is Outcome.COMPLETE_WITH_WARNINGS
+    assert result.exit_code == 0
+    manifest_component = next(
+        item for item in result.components if item.name == "manifest"
+    )
+    assert "snapshots/2026-08-21T140000.000000Z" in (manifest_component.message or "")
+    assert "read-only manifest" in (manifest_component.message or "")
+    assert verify_snapshot_path(snapshot_path).succeeded
+    assert load_manifest(layout.manifest_path).archive["snapshots"] == []
 
 
 def test_corrupt_archived_lfs_payload_prevents_snapshot_publication(
@@ -356,6 +394,55 @@ def test_snapshot_creation_rebuilds_the_manifest_index(tmp_path: Path) -> None:
         "snapshots/2026-08-21T120000.000000Z",
         "snapshots/2026-08-21T130000.000000Z",
     ]
+
+
+def test_snapshot_index_rebuild_names_skipped_records(tmp_path: Path) -> None:
+    remote, _ = create_remote(tmp_path)
+    layout = ArchiveLayout(tmp_path / "archives" / "project")
+    assert backup_archive(str(remote), layout).outcome is Outcome.COMPLETE
+    assert (
+        create_snapshot(
+            layout, created_at=datetime(2026, 8, 21, 12, 0, tzinfo=UTC)
+        ).outcome
+        is Outcome.COMPLETE
+    )
+    skipped_path = layout.snapshots_path / "2026-08-21T120000.000000Z"
+    real_load = load_snapshot_record
+
+    def fail_old_record(snapshot_path: Path) -> dict[str, object]:
+        if snapshot_path == skipped_path:
+            raise PermissionError("record is unreadable")
+        return real_load(snapshot_path)
+
+    with patch(
+        "repo_archive.snapshots.load_snapshot_record", side_effect=fail_old_record
+    ):
+        result = create_snapshot(
+            layout, created_at=datetime(2026, 8, 21, 13, 0, tzinfo=UTC)
+        )
+
+    assert result.outcome is Outcome.COMPLETE_WITH_WARNINGS
+    manifest_component = next(
+        item for item in result.components if item.name == "manifest"
+    )
+    assert "snapshots/2026-08-21T120000.000000Z" in (manifest_component.message or "")
+    assert "record is unreadable" in (manifest_component.message or "")
+
+
+def test_snapshot_verification_rejects_unexpected_root_entries(tmp_path: Path) -> None:
+    remote, _ = create_remote(tmp_path)
+    layout = ArchiveLayout(tmp_path / "archives" / "project")
+    assert backup_archive(str(remote), layout).outcome is Outcome.COMPLETE
+    assert create_snapshot(layout).outcome is Outcome.COMPLETE
+    snapshot_path = next(
+        path.parent for path in layout.snapshots_path.glob("*/snapshot.json")
+    )
+    (snapshot_path / ".lfs-hardlink-probe").write_text("stray", encoding="utf-8")
+
+    verified = verify_snapshot_path(snapshot_path)
+
+    assert verified.outcome == "failed"
+    assert "unexpected entries: .lfs-hardlink-probe" in verified.message
 
 
 def test_verification_rejects_a_malformed_manifest_snapshot_index(
