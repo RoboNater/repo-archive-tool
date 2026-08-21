@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import shutil
-import stat
 import tempfile
-from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
+from repo_archive.filesystem import remove_readonly
 from repo_archive.git import CommandResult, GitRunner
 from repo_archive.lfs import archive_lfs
 from repo_archive.manifest import Manifest, load_manifest, write_json_atomic
@@ -364,7 +363,7 @@ def _promote(staged_mirror: Path, mirror_path: Path) -> None:
         raise
     else:
         if moved_previous:
-            shutil.rmtree(previous, onerror=_remove_readonly)
+            shutil.rmtree(previous, onerror=remove_readonly)
 
 
 def _failure_result(
@@ -443,14 +442,3 @@ def _configuration_failure(
         ),
         errors=(message,),
     )
-
-
-def _remove_readonly(
-    function: Callable[[str], object], path: str, exception_info: tuple[object, ...]
-) -> None:
-    """Retry Windows Git object cleanup after removing its read-only attribute."""
-    error = exception_info[1]
-    if not isinstance(error, PermissionError):
-        raise error
-    Path(path).chmod(stat.S_IWRITE)
-    function(path)

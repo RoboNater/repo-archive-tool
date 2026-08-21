@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -68,6 +69,35 @@ def test_git_supports_batched_input_and_replacement_decoding(mock_run: Mock) -> 
     assert result.stdout == "tree-id tree\n"
     assert mock_run.call_args.kwargs["input"] == "main^{tree}\n"
     assert mock_run.call_args.kwargs["errors"] == "replace"
+
+
+def test_git_batch_blobs_streams_exact_binary_content(tmp_path: Path) -> None:
+    repository = tmp_path / "repository"
+    runner = GitRunner()
+    assert runner.git("init", str(repository)).succeeded
+    first = b"first\nblob\xff"
+    second = b"second blob\n"
+    (repository / "first.bin").write_bytes(first)
+    (repository / "second.bin").write_bytes(second)
+    first_oid = runner.git(
+        "hash-object", "-w", "first.bin", cwd=repository
+    ).stdout.strip()
+    second_oid = runner.git(
+        "hash-object", "-w", "second.bin", cwd=repository
+    ).stdout.strip()
+    received: dict[str, bytes] = {}
+
+    with tempfile.TemporaryFile(mode="w+b") as object_ids:
+        object_ids.write(f"{first_oid}\n{second_oid}\n".encode("ascii"))
+        object_ids.seek(0)
+        result = runner.git_batch_blobs(
+            cwd=repository,
+            object_ids=object_ids,
+            on_blob=lambda oid, content: received.__setitem__(oid, content),
+        )
+
+    assert result.succeeded
+    assert received == {first_oid: first, second_oid: second}
 
 
 @patch("repo_archive.git.subprocess.run")

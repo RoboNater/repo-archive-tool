@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from repo_archive.snapshots import _parse_lfs_pointer
+import hashlib
+from pathlib import Path
+from unittest.mock import patch
+
+from repo_archive.snapshots import _materialize_lfs_payload, _parse_lfs_pointer
 
 
 def test_valid_lfs_pointer_is_parsed() -> None:
@@ -27,3 +31,23 @@ def test_invalid_lfs_pointer_is_rejected() -> None:
         )
         is None
     )
+
+
+def test_materialization_stops_retrying_an_unsupported_reflink(
+    tmp_path: Path,
+) -> None:
+    mirror = tmp_path / "mirror.git"
+    snapshot = tmp_path / "snapshot"
+    oids = []
+    for payload in (b"first", b"second"):
+        oid = hashlib.sha256(payload).hexdigest()
+        source = mirror / "lfs" / "objects" / oid[:2] / oid[2:4] / oid
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes(payload)
+        oids.append(oid)
+
+    with patch("repo_archive.snapshots.try_reflink", return_value=False) as reflink:
+        record = _materialize_lfs_payload(mirror, snapshot, tuple(oids))
+
+    assert reflink.call_count == 1
+    assert record["present_object_count"] == 2

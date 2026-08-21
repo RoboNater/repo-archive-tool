@@ -11,7 +11,8 @@ from unittest.mock import patch
 
 import pytest
 
-from repo_archive.archive import ArchiveLayout, _remove_readonly, backup_archive
+from repo_archive.archive import ArchiveLayout, backup_archive
+from repo_archive.filesystem import remove_readonly
 from repo_archive.git import GitRunner
 from repo_archive.restore import RestoreError, restore_archive
 from repo_archive.results import Outcome
@@ -78,8 +79,8 @@ def test_working_clone_restores_from_mirror_without_source_remote(
     remote, worktree = create_remote(tmp_path)
     layout = ArchiveLayout(tmp_path / "archives" / "project")
     assert backup_archive(str(remote), layout).outcome is Outcome.COMPLETE
-    shutil.rmtree(remote, onerror=_remove_readonly)
-    shutil.rmtree(worktree, onerror=_remove_readonly)
+    shutil.rmtree(remote, onerror=remove_readonly)
+    shutil.rmtree(worktree, onerror=remove_readonly)
     destination = tmp_path / "restored"
 
     result = restore_archive(layout, destination)
@@ -99,9 +100,9 @@ def test_working_clone_restores_from_snapshot_without_mirror(tmp_path: Path) -> 
     assert backup_archive(str(remote), layout).outcome is Outcome.COMPLETE
     created_at = datetime(2026, 8, 21, 14, 0, tzinfo=UTC)
     assert create_snapshot(layout, created_at=created_at).outcome is Outcome.COMPLETE
-    shutil.rmtree(layout.mirror_path, onerror=_remove_readonly)
+    shutil.rmtree(layout.mirror_path, onerror=remove_readonly)
     layout.manifest_path.unlink()
-    shutil.rmtree(remote, onerror=_remove_readonly)
+    shutil.rmtree(remote, onerror=remove_readonly)
     destination = tmp_path / "snapshot-restore"
 
     result = restore_archive(layout, destination, snapshot="2026-08-21T140000.000000Z")
@@ -127,7 +128,7 @@ def test_recovered_mirrors_can_be_republished_from_both_sources(
     )
     assert git("config", "--bool", "remote.origin.mirror", cwd=mirror_restore) == "true"
 
-    shutil.rmtree(layout.mirror_path, onerror=_remove_readonly)
+    shutil.rmtree(layout.mirror_path, onerror=remove_readonly)
     snapshot_restore = tmp_path / "snapshot-restore.git"
     result = restore_archive(
         layout,
@@ -161,6 +162,24 @@ def test_restore_refuses_existing_destination_without_changing_it(
     assert marker.read_text(encoding="utf-8") == "keep\n"
 
 
+def test_restore_reports_missing_snapshot_as_configuration_error(
+    tmp_path: Path,
+) -> None:
+    remote, _ = create_remote(tmp_path)
+    layout = ArchiveLayout(tmp_path / "archives" / "project")
+    assert backup_archive(str(remote), layout).outcome is Outcome.COMPLETE
+
+    result = restore_archive(
+        layout,
+        tmp_path / "missing-snapshot",
+        snapshot="2026-08-21T000000.000000Z",
+    )
+
+    assert result.outcome is Outcome.FAILED
+    assert result.exit_code == 2
+    assert "No such snapshot exists" in result.errors[0]
+
+
 def test_failed_validation_cleans_restore_staging(tmp_path: Path) -> None:
     remote, _ = create_remote(tmp_path)
     layout = ArchiveLayout(tmp_path / "archives" / "project")
@@ -178,6 +197,24 @@ def test_failed_validation_cleans_restore_staging(tmp_path: Path) -> None:
     assert not list(tmp_path.glob(".failed.restore-*"))
 
 
+def test_unwritable_reports_do_not_undo_a_published_restore(tmp_path: Path) -> None:
+    remote, _ = create_remote(tmp_path)
+    layout = ArchiveLayout(tmp_path / "archives" / "project")
+    assert backup_archive(str(remote), layout).outcome is Outcome.COMPLETE
+    destination = tmp_path / "restored"
+
+    with patch(
+        "repo_archive.restore.write_latest_reports",
+        side_effect=OSError("read-only recovery media"),
+    ):
+        result = restore_archive(layout, destination)
+
+    assert result.outcome is Outcome.COMPLETE_WITH_WARNINGS
+    assert result.exit_code == 0
+    assert destination.is_dir()
+    assert "reports could not be written" in result.warnings[0]
+
+
 def test_partial_snapshot_restores_git_and_reports_exact_lfs_gap(
     tmp_path: Path,
 ) -> None:
@@ -192,7 +229,7 @@ def test_partial_snapshot_restores_git_and_reports_exact_lfs_gap(
     snapshot_id = next(
         path.name for path in layout.snapshots_path.iterdir() if path.is_dir()
     )
-    shutil.rmtree(layout.mirror_path, onerror=_remove_readonly)
+    shutil.rmtree(layout.mirror_path, onerror=remove_readonly)
     destination = tmp_path / "partial"
 
     result = restore_archive(
@@ -227,8 +264,8 @@ def test_complete_snapshot_restores_lfs_content_offline(tmp_path: Path) -> None:
     snapshot_id = next(
         path.name for path in layout.snapshots_path.iterdir() if path.is_dir()
     )
-    shutil.rmtree(layout.mirror_path, onerror=_remove_readonly)
-    shutil.rmtree(remote, onerror=_remove_readonly)
+    shutil.rmtree(layout.mirror_path, onerror=remove_readonly)
+    shutil.rmtree(remote, onerror=remove_readonly)
     destination = tmp_path / "lfs-restored"
 
     result = restore_archive(layout, destination, snapshot=snapshot_id)

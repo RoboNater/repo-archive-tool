@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
-import hashlib
 import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
-from repo_archive.archive import ArchiveLayout, _remove_readonly
+from repo_archive.archive import ArchiveLayout
+from repo_archive.filesystem import (
+    copy_independent,
+    remove_readonly,
+    safe_sha256_file,
+    sha256_file,
+)
 from repo_archive.git import CommandResult, GitRunner
 from repo_archive.manifest import load_manifest
 from repo_archive.reporting import write_latest_reports
@@ -117,7 +122,7 @@ def restore_archive(
         return _record(layout, _failure(layout, str(error), kind))
     finally:
         if staging_path.exists():
-            shutil.rmtree(staging_path, onerror=_remove_readonly)
+            shutil.rmtree(staging_path, onerror=remove_readonly)
 
     lfs_partial = bool(source.unavailable_oids) or lfs_checkout_partial
     if source.unavailable_oids:
@@ -170,6 +175,14 @@ def _select_source(
                 ErrorKind.CONFIGURATION,
             )
         snapshot_path = layout.snapshots_path / snapshot
+        if (
+            not snapshot_path.is_dir()
+            or not (snapshot_path / "snapshot.json").is_file()
+        ):
+            raise RestoreError(
+                f"No such snapshot exists in this archive: {snapshot}",
+                ErrorKind.CONFIGURATION,
+            )
         verified = verify_snapshot_path(snapshot_path, runner=runner)
         if not verified.succeeded:
             raise RestoreError(
@@ -241,7 +254,7 @@ def _classify_lfs_objects(
     unavailable: list[str] = []
     for oid in required_oids:
         path = objects_path / oid[:2] / oid[2:4] / oid
-        if path.is_file() and _safe_sha256(path) == oid:
+        if path.is_file() and safe_sha256_file(path) == oid:
             present.append(oid)
         else:
             unavailable.append(oid)
@@ -249,13 +262,16 @@ def _classify_lfs_objects(
 
 
 def _seed_lfs_objects(source: RestoreSource, destination_root: Path) -> None:
+    reflink_supported = True
     for oid in source.present_oids:
         source_path = source.lfs_objects_path / oid[:2] / oid[2:4] / oid
-        if _sha256(source_path) != oid:
+        if sha256_file(source_path) != oid:
             raise RestoreError(f"LFS payload changed during restore: {oid}")
         destination = destination_root / oid[:2] / oid[2:4] / oid
         destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source_path, destination)
+        _, reflink_supported = copy_independent(
+            source_path, destination, try_clone=reflink_supported
+        )
 
 
 def _checkout_worktree(
@@ -328,21 +344,6 @@ def _validate_recovered_mirror(path: Path, runner: GitRunner) -> None:
         )
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _safe_sha256(path: Path) -> str | None:
-    try:
-        return _sha256(path)
-    except OSError:
-        return None
-
-
 def _command_message(command: CommandResult) -> str:
     return (
         command.stderr.strip()
@@ -361,5 +362,15 @@ def _failure(layout: ArchiveLayout, message: str, kind: ErrorKind) -> OperationR
 
 
 def _record(layout: ArchiveLayout, result: OperationResult) -> OperationResult:
-    write_latest_reports(layout.reports_path, result)
+    try:
+        write_latest_reports(layout.reports_path, result)
+    except OSError as error:
+        return OperationResult(
+            operation=result.operation,
+            archive_path=result.archive_path,
+            components=result.components,
+            warnings=result.warnings
+            + (f"Latest restore reports could not be written: {error}",),
+            errors=result.errors,
+        )
     return result

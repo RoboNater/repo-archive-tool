@@ -81,7 +81,7 @@ def build_parser() -> argparse.ArgumentParser:
     verification_mode.add_argument(
         "--full", action="store_true", help="verify objects and bundle snapshots"
     )
-    verification_mode.add_argument(
+    verify.add_argument(
         "--deep",
         action="store_true",
         help="materialize bundles and recompute historical LFS requirements",
@@ -144,7 +144,7 @@ def main() -> int:
     elif arguments.command == "verify":
         result = verify_archive(
             ArchiveLayout(arguments.archive_path),
-            full=not arguments.quick,
+            full=arguments.deep or not arguments.quick,
             deep=arguments.deep,
         )
     elif arguments.command == "snapshot":
@@ -170,7 +170,7 @@ def main() -> int:
                 ),
             ),
         )
-    _write_final_report(result)
+    result = _write_final_report(result)
     emit_result(result, sys.stdout, as_json=as_json)
     return result.exit_code
 
@@ -234,10 +234,27 @@ def _add_backup_snapshot(
     )
 
 
-def _write_final_report(result: OperationResult) -> None:
+def _write_final_report(result: OperationResult) -> OperationResult:
     """Persist the exact result emitted by the CLI when it targets an archive."""
     if result.archive_path is not None:
-        write_latest_reports(ArchiveLayout(result.archive_path).reports_path, result)
+        try:
+            write_latest_reports(
+                ArchiveLayout(result.archive_path).reports_path, result
+            )
+        except OSError as error:
+            if any(
+                "reports could not be written" in warning for warning in result.warnings
+            ):
+                return result
+            return OperationResult(
+                operation=result.operation,
+                archive_path=result.archive_path,
+                components=result.components,
+                warnings=result.warnings
+                + (f"Latest operation reports could not be written: {error}",),
+                errors=result.errors,
+            )
+    return result
 
 
 if __name__ == "__main__":  # pragma: no cover

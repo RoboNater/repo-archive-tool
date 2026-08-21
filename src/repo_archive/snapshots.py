@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import hashlib
+import errno
 import json
 import os
 import re
@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from repo_archive.archive import ArchiveLayout
+from repo_archive.filesystem import safe_sha256_file, sha256_file, try_reflink
 from repo_archive.git import CommandResult, GitRunner
 from repo_archive.manifest import load_manifest, write_json_atomic
 from repo_archive.reporting import write_latest_reports
@@ -53,6 +54,10 @@ class SnapshotVerification:
 class SnapshotError(RuntimeError):
     """A snapshot could not be safely created or verified."""
 
+    def __init__(self, message: str, kind: ErrorKind = ErrorKind.VERIFICATION) -> None:
+        self.kind = kind
+        super().__init__(message)
+
 
 def create_snapshot(
     layout: ArchiveLayout,
@@ -74,6 +79,36 @@ def create_snapshot(
             record_result,
         )
 
+    has_refs = _has_snapshot_refs(layout.mirror_path, runner)
+    if isinstance(has_refs, CommandResult):
+        return _record(
+            layout,
+            _failure(
+                "snapshot",
+                layout,
+                "snapshot refs",
+                _command_message(has_refs),
+                ErrorKind.GENERAL,
+            ),
+            record_result,
+        )
+    if not has_refs:
+        return _record(
+            layout,
+            OperationResult(
+                "snapshot",
+                layout.path,
+                components=(
+                    ComponentResult(
+                        "snapshot",
+                        ComponentStatus.WARNING,
+                        "No refs exist to snapshot; no bundle was created.",
+                    ),
+                ),
+            ),
+            record_result,
+        )
+
     layout.snapshots_path.mkdir(parents=True, exist_ok=True)
     timestamp, snapshot_name = _unique_snapshot_identity(
         layout.snapshots_path, created_at
@@ -89,7 +124,8 @@ def create_snapshot(
         )
         if not bundled.succeeded:
             raise SnapshotError(
-                "Git bundle creation failed: " + _command_message(bundled)
+                "Git bundle creation failed: " + _command_message(bundled),
+                ErrorKind.GENERAL,
             )
 
         refs = _bundle_refs(bundle_path, runner)
@@ -103,6 +139,9 @@ def create_snapshot(
                 + _command_message(inventory)
             )
 
+        _preflight_snapshot_space(
+            staging_path, bundle_path, layout.mirror_path, inventory.required_oids
+        )
         lfs_record = _materialize_lfs_payload(
             layout.mirror_path, staging_path, inventory.required_oids
         )
@@ -115,7 +154,7 @@ def create_snapshot(
             "verification": verification_outcome,
             "bundle": {
                 "path": "snapshot.bundle",
-                "sha256": _sha256(bundle_path),
+                "sha256": sha256_file(bundle_path),
                 "size_bytes": bundle_path.stat().st_size,
             },
             "refs": refs,
@@ -148,16 +187,15 @@ def create_snapshot(
             layout.manifest_path, replace(manifest, archive=archive).to_dict()
         )
     except (OSError, SnapshotError, ValueError) as error:
+        message = _snapshot_error_message(error)
         return _record(
             layout,
             _failure(
                 "snapshot",
                 layout,
                 "snapshot",
-                str(error),
-                ErrorKind.VERIFICATION
-                if isinstance(error, SnapshotError)
-                else ErrorKind.GENERAL,
+                message,
+                error.kind if isinstance(error, SnapshotError) else ErrorKind.GENERAL,
             ),
             record_result,
         )
@@ -205,45 +243,60 @@ def enumerate_lfs_oids(
     repository: Path, runner: GitRunner
 ) -> LfsInventory | CommandResult:
     """Find valid LFS pointer blobs reachable from every ref without git-lfs."""
-    listed = runner.git("rev-list", "--objects", "--all", cwd=repository)
-    if not listed.succeeded:
-        return listed
-    object_ids = [
-        line.split(" ", 1)[0]
-        for line in listed.stdout.splitlines()
-        if line and line.split(" ", 1)[0]
-    ]
-    if not object_ids:
-        return LfsInventory(())
+    required: set[str] = set()
+    with (
+        tempfile.TemporaryFile(mode="w+b") as object_ids,
+        tempfile.TemporaryFile(mode="w+b") as candidates,
+    ):
 
-    checked = runner.git(
-        "cat-file",
-        "--batch-check=%(objectname) %(objecttype) %(objectsize)",
-        cwd=repository,
-        input_text="\n".join(object_ids) + "\n",
-    )
-    if not checked.succeeded:
-        return checked
+        def collect_object(line: str) -> None:
+            oid = line.split(" ", 1)[0]
+            if oid:
+                object_ids.write(oid.encode("ascii") + b"\n")
 
-    candidates: list[str] = []
-    for line in checked.stdout.splitlines():
-        parts = line.split()
-        if len(parts) == 3 and parts[1] == "blob":
+        listed = runner.git_stream_stdout(
+            "rev-list", "--objects", "--all", cwd=repository, on_line=collect_object
+        )
+        if not listed.succeeded:
+            return listed
+        object_ids.seek(0)
+
+        def collect_candidate(line: str) -> None:
+            parts = line.split()
+            if len(parts) != 3 or parts[1] != "blob":
+                return
             try:
                 size = int(parts[2])
             except ValueError:
-                continue
+                return
             if size <= _MAX_POINTER_SIZE:
-                candidates.append(parts[0])
+                candidates.write(parts[0].encode("ascii") + b"\n")
 
-    required: set[str] = set()
-    for oid in candidates:
-        blob = runner.git("cat-file", "blob", oid, cwd=repository)
-        if not blob.succeeded:
-            return blob
-        pointer_oid = _parse_lfs_pointer(blob.stdout)
-        if pointer_oid is not None:
-            required.add(pointer_oid)
+        checked = runner.git_stream_stdout(
+            "cat-file",
+            "--batch-check=%(objectname) %(objecttype) %(objectsize)",
+            cwd=repository,
+            on_line=collect_candidate,
+            input_stream=object_ids,
+        )
+        if not checked.succeeded:
+            return checked
+        candidates.seek(0)
+
+        def inspect_blob(_oid: str, content: bytes) -> None:
+            try:
+                pointer = content.decode("ascii")
+            except UnicodeDecodeError:
+                return
+            pointer_oid = _parse_lfs_pointer(pointer)
+            if pointer_oid is not None:
+                required.add(pointer_oid)
+
+        inspected = runner.git_batch_blobs(
+            cwd=repository, object_ids=candidates, on_blob=inspect_blob
+        )
+        if not inspected.succeeded:
+            return inspected
     return LfsInventory(tuple(sorted(required)))
 
 
@@ -260,7 +313,7 @@ def verify_snapshot_path(
         bundle_path = _record_path(snapshot_path, record["bundle"]["path"])
         if not bundle_path.is_file():
             raise SnapshotError("Recorded bundle is missing.")
-        if _sha256(bundle_path) != record["bundle"]["sha256"]:
+        if sha256_file(bundle_path) != record["bundle"]["sha256"]:
             raise SnapshotError("Bundle digest does not match snapshot.json.")
         if bundle_path.stat().st_size != record["bundle"]["size_bytes"]:
             raise SnapshotError("Bundle size does not match snapshot.json.")
@@ -328,6 +381,53 @@ def load_snapshot_record(snapshot_path: Path) -> dict[str, Any]:
     return _load_snapshot_record(snapshot_path / "snapshot.json")
 
 
+def _has_snapshot_refs(mirror_path: Path, runner: GitRunner) -> bool | CommandResult:
+    refs = runner.git("for-each-ref", "--format=%(refname)", cwd=mirror_path)
+    if not refs.succeeded:
+        return refs
+    if refs.stdout.strip():
+        return True
+    head = runner.git("rev-parse", "--verify", "HEAD", cwd=mirror_path)
+    if head.succeeded:
+        return True
+    if head.returncode in {1, 128}:
+        return False
+    return head
+
+
+def _preflight_snapshot_space(
+    staging_path: Path,
+    bundle_path: Path,
+    mirror_path: Path,
+    required_oids: tuple[str, ...],
+) -> None:
+    payload_bytes = 0
+    for oid in required_oids:
+        source = mirror_path / "lfs" / "objects" / oid[:2] / oid[2:4] / oid
+        if not source.exists():
+            continue
+        if not source.is_file() or safe_sha256_file(source) != oid:
+            raise SnapshotError(f"Archived LFS object is unreadable or corrupt: {oid}")
+        try:
+            payload_bytes += source.stat().st_size
+        except OSError as error:
+            raise SnapshotError(
+                f"Could not measure archived LFS object {oid}: {error}"
+            ) from error
+    try:
+        free_bytes = shutil.disk_usage(staging_path).free
+    except OSError:
+        return
+    required_bytes = bundle_path.stat().st_size + payload_bytes
+    if free_bytes < required_bytes:
+        raise SnapshotError(
+            "Insufficient free space for snapshot staging: "
+            f"approximately {required_bytes} additional bytes required, "
+            f"{free_bytes} available.",
+            ErrorKind.GENERAL,
+        )
+
+
 def _materialize_lfs_payload(
     mirror_path: Path, snapshot_path: Path, required_oids: tuple[str, ...]
 ) -> dict[str, object]:
@@ -338,14 +438,19 @@ def _materialize_lfs_payload(
         name: {"object_count": 0, "logical_bytes": 0}
         for name in ("reflink", "hardlink", "copy")
     }
+    reflink_supported = True
     for oid in required_oids:
         source = mirror_path / "lfs" / "objects" / oid[:2] / oid[2:4] / oid
-        if not source.is_file() or _safe_sha256(source) != oid:
+        if not source.is_file():
             unavailable.append(oid)
             continue
+        if safe_sha256_file(source) != oid:
+            raise SnapshotError(f"Archived LFS object is unreadable or corrupt: {oid}")
         destination = snapshot_path / "lfs" / "objects" / oid[:2] / oid[2:4] / oid
         destination.parent.mkdir(parents=True, exist_ok=True)
-        method = _link_or_copy(source, destination)
+        method, reflink_supported = _link_or_copy(
+            source, destination, try_clone=reflink_supported
+        )
         size = source.stat().st_size
         present.append(oid)
         logical_bytes += size
@@ -399,7 +504,7 @@ def _verify_lfs_record(snapshot_path: Path, lfs: dict[str, Any]) -> None:
     logical_bytes = 0
     for oid in sorted(present):
         path = objects_root / oid[:2] / oid[2:4] / oid
-        if _safe_sha256(path) != oid:
+        if safe_sha256_file(path) != oid:
             raise SnapshotError(f"Snapshot LFS object is corrupt: {oid}")
         logical_bytes += path.stat().st_size
     if lfs["total_logical_bytes"] != logical_bytes:
@@ -491,9 +596,11 @@ def _parse_lfs_pointer(content: str) -> str | None:
     return oid_match.group(1).lower()
 
 
-def _link_or_copy(source: Path, destination: Path) -> str:
-    if _try_reflink(source, destination):
-        return "reflink"
+def _link_or_copy(
+    source: Path, destination: Path, *, try_clone: bool
+) -> tuple[str, bool]:
+    if try_clone and try_reflink(source, destination):
+        return "reflink", True
     try:
         os.link(source, destination)
     except OSError:
@@ -502,22 +609,8 @@ def _link_or_copy(source: Path, destination: Path) -> str:
         except OSError:
             destination.unlink(missing_ok=True)
             raise
-        return "copy"
-    return "hardlink"
-
-
-def _try_reflink(source: Path, destination: Path) -> bool:
-    if os.name != "posix":
-        return False
-    try:
-        import fcntl
-
-        with source.open("rb") as source_stream, destination.open("xb") as target:
-            fcntl.ioctl(target.fileno(), 0x40049409, source_stream.fileno())
-    except (ImportError, OSError):
-        destination.unlink(missing_ok=True)
-        return False
-    return True
+        return "copy", False
+    return "hardlink", False
 
 
 def _unique_snapshot_identity(
@@ -533,27 +626,20 @@ def _unique_snapshot_identity(
     raise OSError("Could not allocate a unique UTC snapshot timestamp.")
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _safe_sha256(path: Path) -> str | None:
-    try:
-        return _sha256(path)
-    except OSError:
-        return None
-
-
 def _command_message(command: CommandResult) -> str:
     return (
         command.stderr.strip()
         or command.stdout.strip()
         or f"Git command failed with exit code {command.returncode}."
     )
+
+
+def _snapshot_error_message(error: OSError | SnapshotError | ValueError) -> str:
+    if isinstance(error, OSError) and (
+        error.errno == errno.ENOSPC or getattr(error, "winerror", None) == 112
+    ):
+        return "Snapshot staging ran out of disk space; no snapshot was published."
+    return str(error)
 
 
 def _failure(

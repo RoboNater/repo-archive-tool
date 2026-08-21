@@ -49,6 +49,7 @@ def test_parser_accepts_info_and_verification_modes() -> None:
     quick = build_parser().parse_args(["verify", "archive", "--quick"])
     full = build_parser().parse_args(["verify", "archive", "--full"])
     deep = build_parser().parse_args(["verify", "archive", "--deep"])
+    full_deep = build_parser().parse_args(["verify", "archive", "--full", "--deep"])
     snapshot = build_parser().parse_args(["snapshot", "archive", "--json"])
     restore = build_parser().parse_args(
         ["restore", "archive", "destination", "--snapshot", "stamp", "--mirror"]
@@ -59,6 +60,8 @@ def test_parser_accepts_info_and_verification_modes() -> None:
     assert quick.quick is True
     assert full.full is True
     assert deep.deep is True
+    assert full_deep.full is True
+    assert full_deep.deep is True
     assert snapshot.command == "snapshot"
     assert restore.snapshot == "stamp"
     assert restore.mirror is True
@@ -146,6 +149,51 @@ def test_backup_bundle_creates_snapshot_and_persists_combined_result(
             components=archive_result.components + snapshot_result.components,
         )
     )
+
+
+def test_backup_bundle_keeps_an_empty_archive_successful(
+    tmp_path: Path, capsys: object
+) -> None:
+    archive_path = tmp_path / "archives" / "empty"
+    archive_result = OperationResult(
+        "backup",
+        archive_path,
+        components=(ComponentResult("git mirror", ComponentStatus.COMPLETE),),
+    )
+    snapshot_result = OperationResult(
+        "snapshot",
+        archive_path,
+        components=(
+            ComponentResult(
+                "snapshot",
+                ComponentStatus.WARNING,
+                "No refs exist to snapshot; no bundle was created.",
+            ),
+        ),
+    )
+    with (
+        patch(
+            "sys.argv",
+            [
+                "repo-archive",
+                "backup",
+                "https://example.test/team/empty.git",
+                "--root",
+                str(tmp_path / "archives"),
+                "--name",
+                "empty",
+                "--bundle",
+                "--json",
+            ],
+        ),
+        patch("repo_archive.cli.backup_archive", return_value=archive_result),
+        patch("repo_archive.cli.create_snapshot", return_value=snapshot_result),
+    ):
+        assert main() == 0
+
+    emitted = json.loads(capsys.readouterr().out)
+    assert emitted["outcome"] == "complete-with-warnings"
+    assert emitted["components"][-1]["status"] == "warning"
 
 
 def test_no_lfs_is_forwarded_without_a_deferred_warning(
@@ -238,3 +286,36 @@ def test_restore_forwards_source_and_mode(tmp_path: Path, capsys: object) -> Non
         recovered_mirror=True,
     )
     assert json.loads(capsys.readouterr().out)["operation"] == "restore"
+
+
+def test_cli_report_failure_is_emitted_as_a_warning(
+    tmp_path: Path, capsys: object
+) -> None:
+    archive_path = tmp_path / "read-only-archive"
+    result = OperationResult(
+        "restore",
+        archive_path,
+        components=(ComponentResult("git restore", ComponentStatus.COMPLETE),),
+    )
+    with (
+        patch(
+            "sys.argv",
+            [
+                "repo-archive",
+                "restore",
+                str(archive_path),
+                str(tmp_path / "destination"),
+                "--json",
+            ],
+        ),
+        patch("repo_archive.cli.restore_archive", return_value=result),
+        patch(
+            "repo_archive.cli.write_latest_reports",
+            side_effect=OSError("read-only recovery media"),
+        ),
+    ):
+        assert main() == 0
+
+    emitted = json.loads(capsys.readouterr().out)
+    assert emitted["outcome"] == "complete-with-warnings"
+    assert "reports could not be written" in emitted["warnings"][0]

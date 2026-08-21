@@ -66,12 +66,12 @@ repo-archive restore <archive-path> <destination>
 
 `verify` performs full Git object, LFS, and snapshot checks by default.
 Use `--quick` for structural and configuration checks that deliberately skip
-those deeper integrity checks. Use `--deep` to additionally materialize each
-bundle and recompute its historical LFS requirements. Add `--json` to any
-current subcommand for a stable machine-readable result. Verification is not
-read-only: every attempt writes the latest reports, and a successful
-verification also records its time and mode in `manifest.json`, so the archive
-set must remain writable.
+those deeper integrity checks. Use `--deep`, optionally with `--full`, to
+materialize each bundle and recompute its historical LFS requirements. Add
+`--json` to any current subcommand for a stable machine-readable result.
+Verification is not read-only: every attempt writes the latest reports, and
+every structurally valid complete or partial verification records its time,
+mode, and outcome in `manifest.json`, so the archive set must remain writable.
 
 See the [usage guide](docs/usage.md) for archive-path examples, all implemented
 options, automation output, reports, exit codes, LFS behavior, submodule
@@ -121,9 +121,11 @@ repo-archive restore <archive-path> <destination>
 
 Use `--snapshot <UTC-timestamp>` to restore from that immutable snapshot, or
 add `--mirror` to either source mode to produce a recovered bare mirror suitable
-for `git push --mirror <replacement-remote>`. Restores seed verified local LFS
-payloads before running the local checkout, stage beside the destination, and
-publish only after validation. Existing destinations are never overwritten.
+for republishing. Push Git refs with `git push --mirror <replacement-remote>`;
+if LFS is present, separately run `git lfs push --all <replacement-remote>`.
+Restores seed verified local LFS payloads before running the local checkout,
+stage beside the destination, and publish only after validation. Existing
+destinations are never overwritten.
 
 ## Completeness and exit status
 
@@ -155,7 +157,11 @@ well as the aggregate exit code.
   verified recovery subtree. An ordinary Git bundle never contains LFS
   payloads, so each snapshot separately owns every available historical LFS
   object reachable from its included refs. Missing objects produce a verified
-  `partial` snapshot with exact unavailable OIDs.
+  `partial` snapshot with exact unavailable OIDs. A ref-less repository has no
+  bundleable content, so snapshot creation reports a warning without failing
+  an otherwise successful backup. For a non-empty repository, a requested
+  snapshot failure makes `backup --bundle` nonzero while retaining the valid
+  published mirror.
 - Restore: working clones and recovered mirrors can use either `mirror.git` or
   a selected snapshot. A partial source restores Git history and reports its
   exact LFS gap; missing Git LFS tooling leaves pointer files in a working clone

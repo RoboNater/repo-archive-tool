@@ -4,16 +4,49 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from repo_archive.archive import ArchiveLayout, backup_archive
+from repo_archive.filesystem import remove_readonly
+from repo_archive.git import CommandResult, GitRunner
 from repo_archive.inspection import verify_archive
 from repo_archive.manifest import load_manifest
 from repo_archive.results import Outcome
 from repo_archive.snapshots import create_snapshot, verify_snapshot_path
+
+
+class CountingBatchRunner(GitRunner):
+    """Count historical pointer enumeration process shapes."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.per_blob_calls = 0
+        self.batch_blob_calls = 0
+
+    def git(self, *arguments: str, **kwargs: object):  # type: ignore[no-untyped-def]
+        if arguments[:2] == ("cat-file", "blob"):
+            self.per_blob_calls += 1
+        return super().git(*arguments, **kwargs)
+
+    def git_batch_blobs(self, **kwargs: object):  # type: ignore[no-untyped-def]
+        self.batch_blob_calls += 1
+        return super().git_batch_blobs(**kwargs)
+
+
+class BundleFailureRunner(GitRunner):
+    """Use real Git except for bundle creation."""
+
+    def git(self, *arguments: str, **kwargs: object):  # type: ignore[no-untyped-def]
+        if arguments[:2] == ("bundle", "create"):
+            return CommandResult(
+                ("git", *arguments), 1, "", "simulated bundle creation failure"
+            )
+        return super().git(*arguments, **kwargs)
 
 
 def git(*arguments: str, cwd: Path | None = None) -> str:
@@ -105,7 +138,8 @@ def test_snapshot_records_an_exact_lfs_gap_without_git_lfs(tmp_path: Path) -> No
         is Outcome.PARTIAL
     )
 
-    result = create_snapshot(layout)
+    runner = CountingBatchRunner()
+    result = create_snapshot(layout, runner=runner)
 
     assert result.outcome is Outcome.PARTIAL
     snapshot_path = next(
@@ -117,6 +151,8 @@ def test_snapshot_records_an_exact_lfs_gap_without_git_lfs(tmp_path: Path) -> No
     assert record["lfs"]["present_oids"] == []
     assert record["lfs"]["unavailable_oids"] == [oid]
     assert verify_snapshot_path(snapshot_path, deep=True).outcome == "verified-partial"
+    assert runner.per_blob_calls == 0
+    assert runner.batch_blob_calls == 2
 
 
 def test_materialization_failure_never_publishes_staging(tmp_path: Path) -> None:
@@ -142,3 +178,92 @@ def test_materialization_failure_never_publishes_staging(tmp_path: Path) -> None
     assert result.outcome is Outcome.FAILED
     assert not list(layout.snapshots_path.glob("*/snapshot.json"))
     assert not list(layout.snapshots_path.glob(".*.tmp-*"))
+
+
+def test_empty_archive_skips_snapshot_without_failing_backup(tmp_path: Path) -> None:
+    remote = tmp_path / "empty.git"
+    git("init", "--bare", str(remote))
+    layout = ArchiveLayout(tmp_path / "archives" / "empty")
+    backup = backup_archive(str(remote), layout)
+    assert backup.outcome is Outcome.COMPLETE
+
+    snapshot = create_snapshot(layout)
+
+    assert snapshot.outcome is Outcome.COMPLETE_WITH_WARNINGS
+    assert snapshot.exit_code == 0
+    assert "No refs exist" in (snapshot.components[0].message or "")
+    assert not list(layout.snapshots_path.glob("*/snapshot.json"))
+    assert load_manifest(layout.manifest_path).archive["snapshots"] == []
+
+
+def test_preflight_rejects_insufficient_space_before_publication(
+    tmp_path: Path,
+) -> None:
+    remote, _ = create_remote(tmp_path)
+    layout = ArchiveLayout(tmp_path / "archives" / "project")
+    assert backup_archive(str(remote), layout).outcome is Outcome.COMPLETE
+
+    with patch(
+        "repo_archive.snapshots.shutil.disk_usage",
+        return_value=SimpleNamespace(free=0),
+    ):
+        result = create_snapshot(layout)
+
+    assert result.outcome is Outcome.FAILED
+    assert result.exit_code == 1
+    assert "Insufficient free space" in result.errors[0]
+    assert not list(layout.snapshots_path.glob("*/snapshot.json"))
+
+
+def test_bundle_creation_failure_uses_general_failure_exit(tmp_path: Path) -> None:
+    remote, _ = create_remote(tmp_path)
+    layout = ArchiveLayout(tmp_path / "archives" / "project")
+    assert backup_archive(str(remote), layout).outcome is Outcome.COMPLETE
+
+    result = create_snapshot(layout, runner=BundleFailureRunner())
+
+    assert result.outcome is Outcome.FAILED
+    assert result.exit_code == 1
+    assert "bundle creation failure" in result.errors[0]
+
+
+def test_corrupt_archived_lfs_payload_prevents_snapshot_publication(
+    tmp_path: Path,
+) -> None:
+    remote, worktree = create_remote(tmp_path)
+    oid = commit_lfs_pointer(worktree, b"expected payload\n")
+    layout = ArchiveLayout(tmp_path / "archives" / "project")
+    assert (
+        backup_archive(str(remote), layout, lfs_enabled=False).outcome
+        is Outcome.PARTIAL
+    )
+    source = layout.mirror_path / "lfs" / "objects" / oid[:2] / oid[2:4] / oid
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"corrupt payload\n")
+
+    result = create_snapshot(layout)
+
+    assert result.outcome is Outcome.FAILED
+    assert result.exit_code == 4
+    assert "corrupt" in result.errors[0]
+    assert not list(layout.snapshots_path.glob("*/snapshot.json"))
+
+
+def test_verification_rejects_a_stale_manifest_snapshot_index(tmp_path: Path) -> None:
+    remote, _ = create_remote(tmp_path)
+    layout = ArchiveLayout(tmp_path / "archives" / "project")
+    assert backup_archive(str(remote), layout).outcome is Outcome.COMPLETE
+    assert create_snapshot(layout).outcome is Outcome.COMPLETE
+    snapshot_path = next(
+        path.parent for path in layout.snapshots_path.glob("*/snapshot.json")
+    )
+    shutil.rmtree(snapshot_path, onerror=remove_readonly)
+
+    result = verify_archive(layout, full=False)
+
+    assert result.outcome is Outcome.FAILED
+    assert result.exit_code == 4
+    component = next(
+        item for item in result.components if item.name == "snapshot index"
+    )
+    assert "missing on disk" in (component.message or "")

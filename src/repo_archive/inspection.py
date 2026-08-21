@@ -85,6 +85,7 @@ def verify_archive(
     components.append(
         ComponentResult("manifest", ComponentStatus.COMPLETE, "Manifest loaded.")
     )
+    components.append(_snapshot_index_component(layout, manifest))
     components.append(_status_component("submodules", manifest.submodules))
     bare = runner.git("rev-parse", "--is-bare-repository", cwd=layout.mirror_path)
     if not bare.succeeded:
@@ -133,7 +134,7 @@ def verify_archive(
     result = OperationResult("verify", layout.path, components=tuple(components))
     if all(component.status != ComponentStatus.FAILED for component in components):
         mode = "deep" if deep else ("full" if full else "quick")
-        _write_successful_verification(layout, manifest, mode)
+        _write_successful_verification(layout, manifest, mode, result.outcome.value)
     return _record(layout, result)
 
 
@@ -201,10 +202,55 @@ def _metadata_component(manifest: Manifest) -> ComponentResult:
 
 def _verification_component(manifest: Manifest) -> ComponentResult:
     verified_at = manifest.archive.get("last_verified_at")
-    message = "No successful verification has been recorded."
+    message = "No verification has been recorded."
     if verified_at:
-        message = f"Last successful verification: {verified_at}."
+        outcome = manifest.archive.get("last_verification_outcome", "unknown")
+        message = f"Last verification: {verified_at}; outcome: {outcome}."
     return ComponentResult("last verification", ComponentStatus.COMPLETE, message)
+
+
+def _snapshot_index_component(
+    layout: ArchiveLayout, manifest: Manifest
+) -> ComponentResult:
+    entries = manifest.archive.get("snapshots", [])
+    if not isinstance(entries, list):
+        return ComponentResult(
+            "snapshot index",
+            ComponentStatus.FAILED,
+            "Manifest snapshot index is not a list.",
+            ErrorKind.VERIFICATION,
+        )
+    indexed: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
+            return ComponentResult(
+                "snapshot index",
+                ComponentStatus.FAILED,
+                "Manifest snapshot index contains an invalid entry.",
+                ErrorKind.VERIFICATION,
+            )
+        indexed.add(str(entry["path"]).replace("\\", "/"))
+    present = {
+        path.relative_to(layout.path).as_posix()
+        for path in discover_snapshot_paths(layout)
+    }
+    if indexed == present:
+        return ComponentResult(
+            "snapshot index",
+            ComponentStatus.COMPLETE,
+            f"Snapshot index matches {len(present)} published snapshot(s).",
+        )
+    details = []
+    if stale := sorted(indexed - present):
+        details.append("missing on disk: " + ", ".join(stale))
+    if unindexed := sorted(present - indexed):
+        details.append("not indexed: " + ", ".join(unindexed))
+    return ComponentResult(
+        "snapshot index",
+        ComponentStatus.FAILED,
+        "Manifest snapshot index does not match disk (" + "; ".join(details) + ").",
+        ErrorKind.VERIFICATION,
+    )
 
 
 def _source_verification_component(
@@ -331,10 +377,16 @@ def _manifest_failure(
 
 
 def _write_successful_verification(
-    layout: ArchiveLayout, manifest: Manifest, mode: str
+    layout: ArchiveLayout, manifest: Manifest, mode: str, outcome: str
 ) -> None:
     archive = dict(manifest.archive)
-    archive.update({"last_verified_at": _timestamp(), "last_verification_mode": mode})
+    archive.update(
+        {
+            "last_verified_at": _timestamp(),
+            "last_verification_mode": mode,
+            "last_verification_outcome": outcome,
+        }
+    )
     write_json_atomic(
         layout.manifest_path, replace(manifest, archive=archive).to_dict()
     )

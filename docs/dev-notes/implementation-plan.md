@@ -55,6 +55,15 @@ This is the working implementation plan for `repo-archive-tool`. Keep it aligned
   Routine verification of published snapshots validates payloads against the
   recorded inventory; independent recomputation from a bundle is an explicit
   deep mode because it requires materializing the bundled Git history.
+- Treat the independent pointer scan as authoritative for snapshot and restore
+  portability because it does not rely on Git LFS tooling. Keep
+  `git lfs ls-files --all` authoritative for archive-update compatibility with
+  installed Git LFS; verification may surface disagreement instead of silently
+  substituting one inventory for the other.
+- Keep manifest schema version 1 for the additive `archive.snapshots` index;
+  older manifests remain readable and snapshot creation initializes the
+  optional list when absent. A future incompatible shape change must increment
+  the schema version.
 
 ## Target Project Structure
 
@@ -76,6 +85,7 @@ repo-archive-tool/
 |       |-- __init__.py
 |       |-- cli.py
 |       |-- archive.py
+|       |-- filesystem.py
 |       |-- git.py
 |       |-- manifest.py
 |       |-- reporting.py
@@ -205,11 +215,12 @@ verification attempt atomically replaces `reports/latest.json` and
 `reports/latest.txt`. Failed attempts update only those reports; manifest
 archive timestamps remain successful-state timestamps. `info` summarizes the
 manifest, source, refs, deferred-component statuses, bundle count, and last
-successful verification. `verify` checks bare-repository structure, source and
+recorded verification outcome. `verify` checks bare-repository structure, source and
 manifest consistency, refs, and (by default) `git fsck --full` plus all present
-bundle snapshots and current LFS completeness. Successful checks record
-`last_verified_at` and mode in the
-manifest. The CLI rewrites reports after applying command-level deferred-work
+bundle snapshots and current LFS completeness. Structurally valid complete or
+declared-partial checks record `last_verified_at`, mode, and explicit outcome
+in the manifest; failed integrity checks retain the prior record. The CLI
+rewrites reports after applying command-level deferred-work
 warnings so persisted reports exactly match the emitted result. `--quick` skips
 object/LFS/bundle work; `--full` is the default.
 
@@ -446,6 +457,21 @@ LFS payloads, reports exact gaps, refuses overwrites, and cleans failed staging.
 Local integration coverage includes both Git sources, both destination modes,
 atomic failure behavior, republishing with `git push --mirror`, declared-partial
 LFS recovery, and a conditional real Git LFS checkout.
+
+**Phase 6 review hardening 2026-08-21:** Ref-less mirrors now skip bundle
+creation with a warning; creation failures use general rather than verification
+exit status. Historical LFS pointer discovery streams the object walk and uses
+two `cat-file` batch processes instead of one process per small blob. Snapshot
+creation performs a best-effort space preflight, treats corrupt archived LFS
+payloads as publication-blocking integrity failures, and disables further
+reflink attempts after the first same-filesystem failure. Verification
+reconciles the manifest index with published subtrees and records complete or
+declared-partial outcomes explicitly. Restore reports missing snapshot IDs as
+configuration errors, tolerates unwritable report media after publishing, and
+uses reflinks or independent copies for writable destinations. Documentation
+now distinguishes Git and LFS republishing and describes deep-verification peak
+space. Shared hashing, reflink, and read-only cleanup primitives live in
+`filesystem.py`; copy policies remain operation-specific by design.
 
 **Exit criterion:** A disconnected archive can produce a verified bundle, a
 normal working clone, an LFS-aware checkout where applicable, and a mirror that

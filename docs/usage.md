@@ -81,7 +81,7 @@ repo-archive update <archive-path>
 
 `info` reports the saved source, creation and update timestamps, ref counts,
 LFS and submodule state, available bundle count, metadata state, and the last
-successful verification. The current human-readable renderer omits component
+recorded verification outcome. The current human-readable renderer omits component
 names, so use `info <archive-path> --json` when you need to distinguish fields
 such as LFS, submodules, and metadata unambiguously.
 
@@ -94,11 +94,13 @@ self-contained snapshots under `snapshots/`:
 repo-archive verify <archive-path> --full
 ```
 
-Deep verification also materializes each bundle into a temporary mirror and
-independently recomputes every historical LFS OID reachable from its refs:
+Deep verification implies full verification, also materializes each bundle
+into a temporary mirror, and independently recomputes every historical LFS OID
+reachable from its refs. It may be combined with the explicit `--full` flag:
 
 ```bash
 repo-archive verify <archive-path> --deep
+repo-archive verify <archive-path> --full --deep
 ```
 
 Quick verification omits Git object, LFS object, and bundle verification. Use
@@ -110,10 +112,11 @@ repo-archive verify <archive-path> --quick
 ```
 
 Verification is not read-only. Every attempt writes `reports/latest.json` and
-`reports/latest.txt`; a successful verification also updates
-`last_verified_at` and `last_verification_mode` in `manifest.json`. The archive
-set must therefore be writable even when the mirror itself is only being
-checked.
+`reports/latest.txt`; every complete or declared-partial verification with no
+failed integrity component also updates `last_verified_at`,
+`last_verification_mode`, and `last_verification_outcome` in `manifest.json`.
+The archive set must therefore be writable even when the mirror itself is only
+being checked.
 
 `update` reads the source from `mirror.git` and follows the same staged,
 validated update process as a repeated `backup`:
@@ -136,11 +139,20 @@ Or request one immediately after a successful backup/update of the mirror:
 repo-archive backup https://github.com/OWNER/REPO.git --root ./archives --bundle
 ```
 
+With `--bundle`, the snapshot is requested work: a non-empty repository whose
+snapshot creation fails returns a nonzero overall result even though the
+already validated mirror remains published and usable. Creation failures use
+the general-failure exit code rather than the verification-failure code.
+
 Snapshot creation writes a temporary sibling, creates a bundle with all
 archived refs, independently finds valid LFS pointers throughout the reachable
 history, materializes available payloads, verifies the complete subtree, and
 publishes it with one rename. A failed staging or verification attempt is
 removed and never appears as a timestamped snapshot.
+
+An archive with no refs has no bundleable Git content. `snapshot` and
+`backup --bundle` report that condition as a warning and leave the valid empty
+mirror archived without publishing a snapshot.
 
 Each snapshot has this shape:
 
@@ -164,6 +176,10 @@ historical LFS object reachable from its refs. Reflinks or hard links can lower
 physical use, but storage can approach the full logical size for every
 snapshot. Copying a snapshot with `cp -r`, `tar`, or `rsync` without preserving
 hard links may expand deduplicated files but does not reduce completeness.
+Creation also needs transient room for staging and deep verification; peak use
+can include the bundle, LFS payload, and a temporary materialized copy of the
+bundled Git history. A best-effort free-space preflight rejects clearly
+insufficient staging space before payload materialization.
 
 ## Restore offline
 
@@ -186,13 +202,22 @@ Snapshot selection accepts a single timestamp directory name under
 only archived recovery data required: snapshot restore still works if the
 mutable mirror and archive manifest are unavailable.
 
+If recovery media is read-only, restore still publishes a successfully
+validated destination and returns a warning when it cannot update that
+archive's `reports/latest.*` files.
+
 Add `--mirror` to either command to create a recovered bare mirror:
 
 ```bash
 repo-archive restore <archive-path> <destination.git> --mirror
 repo-archive restore <archive-path> <destination.git> --snapshot 2026-08-21T140000.000000Z --mirror
 git -C <destination.git> push --mirror <replacement-remote>
+git -C <destination.git> lfs push --all <replacement-remote>
 ```
+
+`git push --mirror` publishes Git refs and objects only; it does not upload LFS
+payloads from a bare recovered mirror. When the archive contains LFS data, run
+the separate `git lfs push --all` command with Git LFS installed.
 
 Every restore refuses an existing destination. It clones into a temporary
 sibling on the destination volume, copies verified LFS objects into the staged
@@ -207,7 +232,9 @@ Git LFS tooling or unavailable payloads produce a partial result and leave
 pointer files where content cannot be materialized. A partial snapshot or
 mirror still restores Git history and lists every unavailable historical OID
 in the result. A recovered mirror carries the verified LFS store but needs no
-working-tree checkout.
+working-tree checkout. Restore payload seeding uses reflinks where supported
+and independent copies otherwise, so the writable destination never depends
+on the continued lifetime of the archive.
 
 The restored repository keeps the local mirror or bundle as `origin`. Change
 it explicitly after recovery when the restored working clone should track a
@@ -236,8 +263,10 @@ Every archive-targeted operation attempt atomically updates:
 
 These files describe the most recent attempt, including a failed attempt. The
 manifest keeps the last successfully published archive timestamps and the last
-successful verification, so a failure report does not masquerade as a
-successful archive update.
+structurally valid verification timestamp, mode, and outcome. Failed integrity
+verification does not replace those fields, while a valid declared-partial
+verification records `partial` explicitly rather than masquerading as
+complete.
 
 The accepted `--verbose` flag is reserved for expanded diagnostics. It does not
 currently make output more detailed. On `backup`, requesting it also produces
