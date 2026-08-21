@@ -129,7 +129,8 @@ a temporary repository.
 The valid outcomes are `verified-complete`, `verified-partial`, and `failed`.
 A declared partial snapshot passes verification only when all present content
 is valid and its unavailable-OID set is exact. Unexpected missing, corrupt, or
-unreadable content fails verification and prevents publication.
+unreadable content fails verification; during creation, that failure prevents
+publication.
 
 Restore from a complete snapshot must support an offline working clone and a
 recovered mirror without external LFS content. Restore from a partial snapshot
