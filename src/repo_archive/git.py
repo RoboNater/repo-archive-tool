@@ -6,12 +6,14 @@ the installed Git executables instead of a Python implementation of Git.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import tempfile
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Thread
+from typing import BinaryIO
 
 from repo_archive.security import redact_sensitive_text
 
@@ -59,6 +61,7 @@ class GitRunner:
         cwd: Path | str | None = None,
         check: bool = False,
         input_text: str | None = None,
+        environment: Mapping[str, str] | None = None,
     ) -> CommandResult:
         """Run Git with *arguments* and return its captured result."""
         return self._run(
@@ -67,6 +70,7 @@ class GitRunner:
             cwd=cwd,
             check=check,
             input_text=input_text,
+            environment=environment,
         )
 
     def lfs(
@@ -75,6 +79,7 @@ class GitRunner:
         cwd: Path | str | None = None,
         check: bool = False,
         input_text: str | None = None,
+        environment: Mapping[str, str] | None = None,
     ) -> CommandResult:
         """Run Git LFS with *arguments* and return its captured result."""
         return self._run(
@@ -83,6 +88,7 @@ class GitRunner:
             cwd=cwd,
             check=check,
             input_text=input_text,
+            environment=environment,
         )
 
     def git_stream_stdout(
@@ -90,11 +96,37 @@ class GitRunner:
         *arguments: str,
         cwd: Path | str | None = None,
         on_line: Callable[[str], None],
+        input_stream: BinaryIO | None = None,
     ) -> CommandResult:
         """Run Git while consuming stdout incrementally through *on_line*."""
         command = (self.git_executable, *arguments)
         try:
-            return self._run_streaming(command, cwd=cwd, on_line=on_line)
+            return self._run_streaming(
+                command, cwd=cwd, on_line=on_line, input_stream=input_stream
+            )
+        except FileNotFoundError:
+            return self._redact_result(
+                CommandResult(
+                    command=command,
+                    returncode=127,
+                    stdout="",
+                    stderr=f"Executable not found: {self.git_executable}",
+                )
+            )
+
+    def git_batch_blobs(
+        self,
+        *,
+        cwd: Path | str,
+        object_ids: BinaryIO,
+        on_blob: Callable[[str, bytes], None],
+    ) -> CommandResult:
+        """Read blob contents from one ``git cat-file --batch`` process."""
+        command = (self.git_executable, "cat-file", "--batch")
+        try:
+            return self._run_blob_batch(
+                command, cwd=cwd, object_ids=object_ids, on_blob=on_blob
+            )
         except FileNotFoundError:
             return self._redact_result(
                 CommandResult(
@@ -113,6 +145,7 @@ class GitRunner:
         cwd: Path | str | None,
         check: bool,
         input_text: str | None,
+        environment: Mapping[str, str] | None,
     ) -> CommandResult:
         command = (executable, *arguments)
         try:
@@ -123,6 +156,9 @@ class GitRunner:
                 check=False,
                 encoding="utf-8",
                 errors="replace",
+                env=(
+                    {**os.environ, **environment} if environment is not None else None
+                ),
                 input=input_text,
                 shell=False,
                 text=True,
@@ -158,6 +194,7 @@ class GitRunner:
         *,
         cwd: Path | str | None,
         on_line: Callable[[str], None],
+        input_stream: BinaryIO | None,
     ) -> CommandResult:
         reader_errors: list[BaseException] = []
         with tempfile.TemporaryFile(
@@ -170,6 +207,7 @@ class GitRunner:
                 errors="replace",
                 shell=False,
                 stderr=stderr_stream,
+                stdin=input_stream,
                 stdout=subprocess.PIPE,
                 text=True,
             )
@@ -206,6 +244,89 @@ class GitRunner:
         if timed_out:
             returncode = 124
             stderr = stderr or "Command timed out."
+        return self._redact_result(CommandResult(command, returncode, "", stderr))
+
+    def _run_blob_batch(
+        self,
+        command: tuple[str, ...],
+        *,
+        cwd: Path | str,
+        object_ids: BinaryIO,
+        on_blob: Callable[[str, bytes], None],
+    ) -> CommandResult:
+        reader_errors: list[BaseException] = []
+        batch_errors: list[str] = []
+        with tempfile.TemporaryFile(mode="w+b") as stderr_stream:
+            process = subprocess.Popen(
+                command,
+                cwd=cwd,
+                shell=False,
+                stderr=stderr_stream,
+                stdin=object_ids,
+                stdout=subprocess.PIPE,
+            )
+            assert process.stdout is not None
+
+            def consume_stdout() -> None:
+                error_message = ""
+                with process.stdout:
+                    try:
+                        while header_bytes := process.stdout.readline():
+                            header = header_bytes.decode(
+                                "ascii", errors="replace"
+                            ).strip()
+                            parts = header.split()
+                            if len(parts) == 2 and parts[1] == "missing":
+                                error_message = f"Git object is missing: {parts[0]}"
+                                break
+                            if len(parts) != 3:
+                                error_message = (
+                                    "Git cat-file returned an invalid header."
+                                )
+                                break
+                            oid, object_type, size_text = parts
+                            try:
+                                size = int(size_text)
+                            except ValueError:
+                                error_message = "Git cat-file returned an invalid size."
+                                break
+                            content = process.stdout.read(size)
+                            terminator = process.stdout.read(1)
+                            if len(content) != size or terminator != b"\n":
+                                error_message = (
+                                    "Git cat-file returned truncated content."
+                                )
+                                break
+                            if object_type == "blob":
+                                on_blob(oid, content)
+                    except BaseException as error:
+                        reader_errors.append(error)
+                    finally:
+                        if error_message:
+                            batch_errors.append(error_message)
+                        if reader_errors or batch_errors:
+                            process.kill()
+
+            reader = Thread(target=consume_stdout, daemon=True)
+            reader.start()
+            timed_out = False
+            try:
+                returncode = process.wait(timeout=self.timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                process.kill()
+                returncode = process.wait()
+            reader.join()
+            stderr_stream.seek(0)
+            stderr = stderr_stream.read().decode("utf-8", errors="replace")
+        if reader_errors:
+            raise reader_errors[0]
+        if timed_out:
+            returncode = 124
+            stderr = stderr or "Command timed out."
+        if batch_errors:
+            returncode = returncode or 1
+            stderr = stderr or batch_errors[0]
         return self._redact_result(CommandResult(command, returncode, "", stderr))
 
     def _finish_result(self, result: CommandResult, *, check: bool) -> CommandResult:

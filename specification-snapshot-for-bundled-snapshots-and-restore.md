@@ -88,8 +88,16 @@ All recorded paths must be relative to the snapshot subtree.
   occur on one volume.
 - Create the bundle, materialize the LFS payload, write the record, and verify
   the complete staged subtree before publication.
+- Treat any staging-verification warning as a creation failure. Staging is
+  tool-controlled, so unexpected content must not be silently published.
 - Publish with one same-volume rename to the unique timestamped destination.
 - Update archive-level snapshot indexes, manifests, and reports atomically.
+- Treat that rename as the snapshot publication commit point. Index and report
+  files are each replaced atomically but cannot form one filesystem transaction
+  with the snapshot directory. If a later index write fails, report the
+  published path and index drift as a warning rather than claiming snapshot
+  creation failed; a later successful snapshot operation may rebuild the index
+  from published records.
 - Remove failed staging safely. Never replace or expose a final snapshot after
   a creation, materialization, or verification failure.
 
@@ -116,10 +124,15 @@ LFS OIDs from the included refs before publication.
 
 Verification of an already-published snapshot must:
 
+- report unexpected entries at the snapshot subtree root as warnings when they
+  are outside the recorded recovery unit, while rejecting entries that collide
+  with required snapshot paths or recorded payload inventory;
 - run `git bundle verify` and confirm the bundle refs match `snapshot.json`;
 - SHA-256 hash every present LFS object rather than check presence alone; and
-- confirm that the recorded present and unavailable sets exactly match the
-  subtree.
+- confirm that every recorded present LFS payload exists and that the present
+  and unavailable sets exactly cover the required inventory. Unrecorded entries
+  directly under `lfs/` and unrecorded files under `lfs/objects` are warnings
+  rather than missing or corrupt payloads.
 
 Routine published-snapshot verification uses the recorded required-OID set.
 Independent recomputation from the bundle is required only in an explicit deep
@@ -128,9 +141,16 @@ a temporary repository.
 
 The valid outcomes are `verified-complete`, `verified-partial`, and `failed`.
 A declared partial snapshot passes verification only when all present content
-is valid and its unavailable-OID set is exact. Unexpected missing, corrupt, or
-unreadable content fails verification; during creation, that failure prevents
+is valid and its unavailable-OID set is exact. Missing, corrupt, or unreadable
+recorded content fails verification; during creation, that failure prevents
 publication.
+
+Unrecorded sidecars at the snapshot root, directly under `lfs/`, or under
+`lfs/objects` do not alter the recovery unit and must not make an otherwise
+verified snapshot unrestorable. Verification and restore report them by name,
+while restore continues using only the recorded bundle and LFS payload. A
+missing recorded payload or a payload whose content does not hash to its OID
+remains a failure.
 
 Restore from a complete snapshot must support an offline working clone and a
 recovered mirror without external LFS content. Restore from a partial snapshot

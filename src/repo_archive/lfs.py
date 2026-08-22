@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
 import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
+from repo_archive.filesystem import sha256_file
 from repo_archive.git import CommandResult, GitRunner
 from repo_archive.results import ComponentResult, ComponentStatus
 
@@ -213,7 +213,7 @@ def verify_lfs_objects(mirror_path: Path, runner: GitRunner) -> LfsArchiveResult
             missing.append(oid)
         else:
             try:
-                actual_oid = _sha256(object_path)
+                actual_oid = sha256_file(object_path)
             except OSError:
                 corrupt.append(oid)
             else:
@@ -315,14 +315,6 @@ def _partial(
         manifest,
         ComponentResult("lfs", ComponentStatus.PARTIAL, message),
     )
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _command_message(command: CommandResult) -> str:

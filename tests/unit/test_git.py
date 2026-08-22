@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import io
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -46,6 +48,7 @@ def test_git_captures_a_successful_command(mock_run: Mock) -> None:
         check=False,
         encoding="utf-8",
         errors="replace",
+        env=None,
         input=None,
         shell=False,
         text=True,
@@ -69,6 +72,56 @@ def test_git_supports_batched_input_and_replacement_decoding(mock_run: Mock) -> 
     assert mock_run.call_args.kwargs["errors"] == "replace"
 
 
+def test_git_batch_blobs_streams_exact_binary_content(tmp_path: Path) -> None:
+    repository = tmp_path / "repository"
+    runner = GitRunner()
+    assert runner.git("init", str(repository)).succeeded
+    first = b"first\nblob\xff"
+    second = b"second blob\n"
+    (repository / "first.bin").write_bytes(first)
+    (repository / "second.bin").write_bytes(second)
+    first_oid = runner.git(
+        "hash-object", "-w", "first.bin", cwd=repository
+    ).stdout.strip()
+    second_oid = runner.git(
+        "hash-object", "-w", "second.bin", cwd=repository
+    ).stdout.strip()
+    received: dict[str, bytes] = {}
+
+    with tempfile.TemporaryFile(mode="w+b") as object_ids:
+        object_ids.write(f"{first_oid}\n{second_oid}\n".encode("ascii"))
+        object_ids.seek(0)
+        result = runner.git_batch_blobs(
+            cwd=repository,
+            object_ids=object_ids,
+            on_blob=lambda oid, content: received.__setitem__(oid, content),
+        )
+
+    assert result.succeeded
+    assert received == {first_oid: first, second_oid: second}
+
+
+@patch("repo_archive.git.subprocess.Popen")
+def test_git_batch_blobs_honors_the_runner_timeout(mock_popen: Mock) -> None:
+    process = Mock()
+    process.stdout = io.BytesIO()
+    process.wait.side_effect = [
+        subprocess.TimeoutExpired(("git", "cat-file", "--batch"), 1),
+        0,
+    ]
+    mock_popen.return_value = process
+
+    with tempfile.TemporaryFile(mode="w+b") as object_ids:
+        result = GitRunner(timeout=1).git_batch_blobs(
+            cwd=Path("archive"), object_ids=object_ids, on_blob=lambda *_: None
+        )
+
+    assert result.returncode == 124
+    assert result.stderr == "Command timed out."
+    assert process.wait.call_args_list[0].kwargs == {"timeout": 1}
+    process.kill.assert_called_once()
+
+
 @patch("repo_archive.git.subprocess.run")
 def test_lfs_uses_its_configured_executable(mock_run: Mock) -> None:
     mock_run.return_value = subprocess.CompletedProcess(
@@ -78,6 +131,17 @@ def test_lfs_uses_its_configured_executable(mock_run: Mock) -> None:
     GitRunner(git_lfs_executable="custom-lfs").lfs("fetch", "--all")
 
     assert mock_run.call_args.args[0] == ("custom-lfs", "fetch", "--all")
+
+
+@patch("repo_archive.git.subprocess.run")
+def test_git_merges_command_environment(mock_run: Mock) -> None:
+    mock_run.return_value = subprocess.CompletedProcess(
+        args=("git", "checkout"), returncode=0, stdout="", stderr=""
+    )
+
+    GitRunner().git("checkout", environment={"GIT_LFS_SKIP_SMUDGE": "1"})
+
+    assert mock_run.call_args.kwargs["env"]["GIT_LFS_SKIP_SMUDGE"] == "1"
 
 
 @patch("repo_archive.git.subprocess.run", side_effect=FileNotFoundError)

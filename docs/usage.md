@@ -2,8 +2,7 @@
 
 `repo-archive-tool` maintains a verified native Git mirror and describes its
 completeness in a manifest and latest-operation reports. The currently shipped
-workflow can create, update, inspect, and verify an archive. Bundle creation and
-offline restore are planned but are not implemented yet.
+workflow can create, update, inspect, verify, snapshot, and restore an archive.
 
 ## Requirements and installation
 
@@ -82,18 +81,30 @@ repo-archive update <archive-path>
 
 `info` reports the saved source, creation and update timestamps, ref counts,
 LFS and submodule state, available bundle count, metadata state, and the last
-successful verification. The current human-readable renderer omits component
+recorded verification outcome. The current human-readable renderer omits component
 names, so use `info <archive-path> --json` when you need to distinguish fields
 such as LFS, submodules, and metadata unambiguously.
 
 `verify` performs full verification by default. It checks archive structure,
 the configured source, refs, manifest consistency, the Git object database with
 `git fsck --full`, archived LFS objects when applicable, and any `.bundle`
-files already present in `snapshots/`:
+self-contained snapshots under `snapshots/`:
 
 ```bash
 repo-archive verify <archive-path> --full
 ```
+
+Deep verification implies full verification, also materializes each bundle
+into a temporary mirror, and independently recomputes every historical LFS OID
+reachable from its refs. It may be combined with the explicit `--full` flag:
+
+```bash
+repo-archive verify <archive-path> --deep
+repo-archive verify <archive-path> --full --deep
+```
+
+`--quick` and `--deep` are mutually exclusive because deep verification is the
+slowest and most comprehensive mode.
 
 Quick verification omits Git object, LFS object, and bundle verification. Use
 it for a faster structural and configuration check, not as a substitute for
@@ -104,10 +115,11 @@ repo-archive verify <archive-path> --quick
 ```
 
 Verification is not read-only. Every attempt writes `reports/latest.json` and
-`reports/latest.txt`; a successful verification also updates
-`last_verified_at` and `last_verification_mode` in `manifest.json`. The archive
-set must therefore be writable even when the mirror itself is only being
-checked.
+`reports/latest.txt`; every complete or declared-partial verification with no
+failed integrity component also updates `last_verified_at`,
+`last_verification_mode`, and `last_verification_outcome` in `manifest.json`.
+The archive set must therefore be writable even when the mirror itself is only
+being checked.
 
 `update` reads the source from `mirror.git` and follows the same staged,
 validated update process as a repeated `backup`:
@@ -115,6 +127,153 @@ validated update process as a repeated `backup`:
 ```bash
 repo-archive update <archive-path>
 ```
+
+## Create a snapshot
+
+Create a point-in-time recovery unit from the current mirror:
+
+```bash
+repo-archive snapshot <archive-path>
+```
+
+Or request one immediately after a successful backup/update of the mirror:
+
+```bash
+repo-archive backup https://github.com/OWNER/REPO.git --root ./archives --bundle
+```
+
+With `--bundle`, the snapshot is requested work: a non-empty repository whose
+snapshot creation fails returns a nonzero overall result even though the
+already validated mirror remains published and usable. Bundle-creation and
+free-space failures use the general-failure exit code; detected integrity
+failures use the verification-failure exit code.
+
+Snapshot creation writes a temporary sibling, creates a bundle with all
+archived refs, independently finds valid LFS pointers throughout the reachable
+history, materializes available payloads, verifies the complete subtree, and
+publishes it with one rename. A failed staging or verification attempt is
+removed and never appears as a timestamped snapshot.
+
+An archive with no refs has no bundleable Git content. `snapshot` and
+`backup --bundle` report that condition as a warning and leave the valid empty
+mirror archived without publishing a snapshot.
+
+Each snapshot has this shape:
+
+```text
+snapshots/<UTC-timestamp>/
+|-- snapshot.bundle
+|-- snapshot.json
+`-- lfs/objects/<aa>/<bb>/<oid>
+```
+
+An ordinary Git bundle does not contain LFS objects. `snapshot.json` records
+the bundle digest and refs plus every required, present, and unavailable LFS
+OID. A complete snapshot owns all Git and LFS content required to recover its
+included refs without the mutable archive mirror. If the mirror lacks required
+LFS content, creation still publishes a verified `partial` snapshot that owns
+its Git history and reports the exact LFS gap; it never silently falls back to
+the mirror during future recovery. A present object whose content does not
+match its OID is corruption, not an unavailable payload, so it blocks snapshot
+publication. Run an LFS-enabled `backup` or `update` to refetch and verify the
+archive before retrying the snapshot.
+
+A snapshot's logical size is approximately its full Git history plus every
+historical LFS object reachable from its refs. Reflinks or hard links can lower
+physical use, but storage can approach the full logical size for every
+snapshot. Copying a snapshot with `cp -r`, `tar`, or `rsync` without preserving
+hard links may expand deduplicated files but does not reduce completeness.
+Creation also needs transient room for staging and deep verification; peak use
+can include the bundle, LFS payload, and a temporary materialized copy of the
+bundled Git history. A best-effort free-space preflight rejects clearly
+insufficient staging space before payload materialization. The estimate probes
+same-volume hard-link support and does not charge the logical payload size when
+those links can be used; otherwise it conservatively assumes payload copies.
+
+The manifest keeps a convenience index of published snapshots, but every
+snapshot subtree remains self-describing. If a subtree is manually deleted for
+retention, or publication completes just before an interrupted manifest write,
+`verify` reports the index mismatch as a warning rather than declaring the
+remaining snapshots corrupt. The next successful `snapshot` command rebuilds
+the index from the published `snapshot.json` records. A malformed index shape
+is still a verification failure. Only remove whole timestamped subtrees while
+no archive operation is running. The subtree rename is the publication commit
+point: if the later manifest-index write fails, `snapshot` returns
+`complete-with-warnings` and names the published path rather than incorrectly
+claiming that no snapshot was created. Rebuild warnings also name any existing
+record that could not be read. Snapshot verification rejects files or
+directories that collide with required paths or the recorded payload
+inventory. Other unrecorded root entries, including operating-system sidecar
+files, are named in a verification warning but do not make the recorded
+recovery unit unrestorable. The same rule applies to unrecorded entries directly
+under `lfs/` and unrecorded files under `lfs/objects`: they are named and
+ignored, while every recorded payload must still exist and hash to its OID.
+Snapshot creation treats any such warning in its tool-controlled staging tree
+as a failure and does not publish it.
+
+## Restore offline
+
+Restore a normal working clone from the mutable archive mirror:
+
+```bash
+repo-archive restore <archive-path> <destination>
+```
+
+This reads only `mirror.git`; it does not contact the mirror's configured
+source remote. To use an immutable recovery unit instead, select its UTC
+directory name:
+
+```bash
+repo-archive restore <archive-path> <destination> --snapshot 2026-08-21T140000.000000Z
+```
+
+Snapshot selection accepts a single timestamp directory name under
+`snapshots/`, never an arbitrary filesystem path. The selected subtree is the
+only archived recovery data required: snapshot restore still works if the
+mutable mirror and archive manifest are unavailable.
+
+Unrecorded sidecar entries at the snapshot root, directly under `lfs/`, or
+under `lfs/objects` are reported as restore-source warnings and ignored.
+Restore still requires the recorded bundle, record, and LFS inventory to pass
+their integrity checks.
+
+If recovery media is read-only, restore still publishes a successfully
+validated destination and returns a warning when it cannot update that
+archive's `reports/latest.*` files.
+
+Add `--mirror` to either command to create a recovered bare mirror:
+
+```bash
+repo-archive restore <archive-path> <destination.git> --mirror
+repo-archive restore <archive-path> <destination.git> --snapshot 2026-08-21T140000.000000Z --mirror
+git -C <destination.git> push --mirror <replacement-remote>
+git -C <destination.git> lfs push --all <replacement-remote>
+```
+
+`git push --mirror` publishes Git refs and objects only; it does not upload LFS
+payloads from a bare recovered mirror. When the archive contains LFS data, run
+the separate `git lfs push --all` command with Git LFS installed.
+
+Every restore refuses an existing destination. It clones into a temporary
+sibling on the destination volume, copies verified LFS objects into the staged
+repository, checks out a working tree locally when requested, runs Git object
+validation, and publishes the destination with one rename. A failed restore
+removes staging and leaves the destination absent.
+
+For a working clone, Git LFS smudging is disabled during the Git checkout so it
+cannot fetch from a remote. The tool seeds the local LFS store and then runs
+`git lfs checkout`, which uses those local objects without downloading. Missing
+Git LFS tooling or unavailable payloads produce a partial result and leave
+pointer files where content cannot be materialized. A partial snapshot or
+mirror still restores Git history and lists every unavailable historical OID
+in the result. A recovered mirror carries the verified LFS store but needs no
+working-tree checkout. Restore payload seeding uses reflinks where supported
+and independent copies otherwise, so the writable destination never depends
+on the continued lifetime of the archive.
+
+The restored repository keeps the local mirror or bundle as `origin`. Change
+it explicitly after recovery when the restored working clone should track a
+new remote.
 
 ## Output and automation
 
@@ -139,8 +298,10 @@ Every archive-targeted operation attempt atomically updates:
 
 These files describe the most recent attempt, including a failed attempt. The
 manifest keeps the last successfully published archive timestamps and the last
-successful verification, so a failure report does not masquerade as a
-successful archive update.
+structurally valid verification timestamp, mode, and outcome. Failed integrity
+verification does not replace those fields, while a valid declared-partial
+verification records `partial` explicitly rather than masquerading as
+complete.
 
 The accepted `--verbose` flag is reserved for expanded diagnostics. It does not
 currently make output more detailed. On `backup`, requesting it also produces
@@ -215,13 +376,15 @@ A current archive set uses this layout:
 |-- reports/
 |   |-- latest.json      Structured result of the latest operation attempt
 |   `-- latest.txt       Human-readable result of the latest operation attempt
-|-- snapshots/           Reserved for bundle snapshots
+|-- snapshots/
+|   `-- <UTC-timestamp>/ Self-contained bundle, record, and LFS payload
 `-- metadata/            Reserved for provider-specific exports
 ```
 
-The mirror remains usable through ordinary Git commands. Do not interpret the
-presence of the reserved `snapshots/` or `metadata/` directories as evidence
-that those components have been archived.
+The mirror remains usable through ordinary Git commands. A timestamped
+snapshot is published only after its record and payload verify. Do not
+interpret the presence of the reserved `metadata/` directory as evidence that
+provider data has been archived.
 
 ## Credentials and sensitive data
 
@@ -245,10 +408,6 @@ embedded credentials. Treat its output as sensitive.
 
 The following capabilities are planned and are not shipped yet:
 
-- Creating bundle snapshots. `backup --bundle` is accepted but performs no
-  snapshot work and reports a deferred-work warning.
-- Restoring a working clone or recovered mirror. There is no `restore`
-  subcommand yet.
 - Recursively archiving submodule repositories.
 - Exporting GitHub or other provider metadata. `backup --metadata github` is
   accepted but performs no export and reports a deferred-work warning.

@@ -8,7 +8,11 @@ from pathlib import Path
 
 import pytest
 
-from repo_archive.reporting import emit_result, write_latest_reports
+from repo_archive.reporting import (
+    add_report_write_warning,
+    emit_result,
+    write_latest_reports,
+)
 from repo_archive.results import (
     ComponentResult,
     ComponentStatus,
@@ -99,3 +103,13 @@ def test_latest_reports_are_written_atomically(tmp_path: Path) -> None:
     assert "RESULT: complete" in (tmp_path / "reports" / "latest.txt").read_text(
         encoding="utf-8"
     )
+
+
+def test_report_write_warning_is_not_duplicated() -> None:
+    result = OperationResult("restore", Path("archive"))
+
+    first = add_report_write_warning(result, OSError("read-only media"))
+    repeated = add_report_write_warning(first, OSError("still read-only"))
+
+    assert repeated is first
+    assert len(repeated.warnings) == 1

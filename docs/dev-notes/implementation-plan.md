@@ -1,7 +1,7 @@
 # repo-archive-tool Implementation Plan
 
 **Status:** In progress
-**Last reviewed:** 2026-08-21
+**Last reviewed:** 2026-08-22
 **Governing specification:** [`repo-archive-tool-spec.md`](../../repo-archive-tool-spec.md)
 
 This is the working implementation plan for `repo-archive-tool`. Keep it aligned with the repository as design decisions are made and phases are completed. The specification defines product requirements; this document records the intended implementation sequence and current project state.
@@ -15,7 +15,7 @@ This is the working implementation plan for `repo-archive-tool`. Keep it aligned
 - [x] LFS-aware archival implemented.
 - [x] Submodule awareness and incompleteness reporting implemented.
 - [x] Current-capability usage and project documentation completed.
-- [ ] Bundle snapshots and offline restore implemented.
+- [x] Bundle snapshots and offline restore implemented.
 
 ## Implementation Decisions
 
@@ -55,6 +55,15 @@ This is the working implementation plan for `repo-archive-tool`. Keep it aligned
   Routine verification of published snapshots validates payloads against the
   recorded inventory; independent recomputation from a bundle is an explicit
   deep mode because it requires materializing the bundled Git history.
+- Treat the independent pointer scan as authoritative for snapshot and restore
+  portability because it does not rely on Git LFS tooling. Keep
+  `git lfs ls-files --all` authoritative for archive-update compatibility with
+  installed Git LFS; verification may surface disagreement instead of silently
+  substituting one inventory for the other.
+- Keep manifest schema version 1 for the additive `archive.snapshots` index;
+  older manifests remain readable and snapshot creation initializes the
+  optional list when absent. A future incompatible shape change must increment
+  the schema version.
 
 ## Target Project Structure
 
@@ -76,6 +85,7 @@ repo-archive-tool/
 |       |-- __init__.py
 |       |-- cli.py
 |       |-- archive.py
+|       |-- filesystem.py
 |       |-- git.py
 |       |-- manifest.py
 |       |-- reporting.py
@@ -205,11 +215,12 @@ verification attempt atomically replaces `reports/latest.json` and
 `reports/latest.txt`. Failed attempts update only those reports; manifest
 archive timestamps remain successful-state timestamps. `info` summarizes the
 manifest, source, refs, deferred-component statuses, bundle count, and last
-successful verification. `verify` checks bare-repository structure, source and
+recorded verification outcome. `verify` checks bare-repository structure, source and
 manifest consistency, refs, and (by default) `git fsck --full` plus all present
-bundle snapshots and current LFS completeness. Successful checks record
-`last_verified_at` and mode in the
-manifest. The CLI rewrites reports after applying command-level deferred-work
+bundle snapshots and current LFS completeness. Structurally valid complete or
+declared-partial checks record `last_verified_at`, mode, and explicit outcome
+in the manifest; failed integrity checks retain the prior record. The CLI
+rewrites reports after applying command-level deferred-work
 warnings so persisted reports exactly match the emitted result. `--quick` skips
 object/LFS/bundle work; `--full` is the default.
 
@@ -396,33 +407,115 @@ documentation updated alongside each change.
   [Phase 6 snapshot and restore specification](../../specification-snapshot-for-bundled-snapshots-and-restore.md).
 - [x] Define the snapshot record format, including path, creation timestamp,
   verification outcome, included refs, and LFS relationship.
-- [ ] Implement `snapshot <archive-path>` using a temporary bundle path.
-- [ ] Create bundles containing all intended refs and verify them before atomic
+- [x] Implement `snapshot <archive-path>` using a temporary bundle path.
+- [x] Create bundles containing all intended refs and verify them before atomic
   publication under a unique UTC timestamp.
-- [ ] Make the existing `backup --bundle` option create a verified snapshot
+- [x] Make the existing `backup --bundle` option create a verified snapshot
   after a successful archive update, using the same snapshot implementation.
-- [ ] Record snapshot paths and verification outcomes without weakening atomic
+- [x] Record snapshot paths and verification outcomes without weakening atomic
   manifest and report updates.
-- [ ] State in all relevant output and user documentation that ordinary Git
+- [x] State in all relevant output and user documentation that ordinary Git
   bundles do not contain LFS objects.
-- [ ] Define restore CLI modes before coding, including a normal working clone,
+- [x] Define restore CLI modes before coding, including a normal working clone,
   selection of a bundle snapshot, and a recovered mirror suitable for
   `git push --mirror`.
-- [ ] Implement `restore <archive-path> <destination>` as an offline normal
+
+  **Restore CLI contract (2026-08-21):**
+  `restore <archive-path> <destination>` creates an offline normal working
+  clone from `mirror.git`; `--snapshot <UTC-timestamp>` selects that immutable
+  snapshot subtree instead; and `--mirror` produces a recovered bare mirror
+  from either source. Snapshot identifiers are single directory names under
+  `snapshots/`, not arbitrary paths. Every mode rejects an existing
+  destination, stages on the destination volume, seeds only local verified LFS
+  payloads, validates the result, and publishes it with one rename. A partial
+  source may publish usable Git history but must retain and report its exact
+  LFS gap.
+- [x] Implement `restore <archive-path> <destination>` as an offline normal
   clone from `mirror.git`.
-- [ ] Seed restored repositories with archived LFS objects and perform the
+- [x] Seed restored repositories with archived LFS objects and perform the
   supported local LFS checkout flow without requiring the source remote.
-- [ ] Support restoration from a selected bundle.
-- [ ] Support producing a recovered mirror suitable for `git push --mirror` to
+- [x] Support restoration from a selected bundle.
+- [x] Support producing a recovered mirror suitable for `git push --mirror` to
   a replacement remote.
-- [ ] Refuse existing or unsafe destination overwrites. Build restores in a
+- [x] Refuse existing or unsafe destination overwrites. Build restores in a
   temporary sibling and publish the destination only after clone, LFS seeding,
   checkout, and validation succeed; clean up failed staging safely.
-- [ ] Add unit and integration coverage for bundle creation, verification,
+- [x] Add unit and integration coverage for bundle creation, verification,
   atomic publication, destination safety, offline mirror and bundle restores,
   recovered mirrors, and conditional LFS restoration.
-- [ ] Update `README.md` and `docs/usage.md` in the same changes with the final
+- [x] Update `README.md` and `docs/usage.md` in the same changes with the final
   snapshot and restore syntax, guarantees, examples, and limitations.
+
+**Phase 6 completed 2026-08-21:** Snapshot creation publishes a versioned
+record, verified all-ref bundle, and independently enumerated full-history LFS
+payload under one timestamped subtree. Routine verification hashes the bundle
+and payload inventory, while `verify --deep` materializes bundle history and
+recomputes required LFS OIDs. `backup --bundle` uses the same implementation.
+Restore stages and validates offline working clones or recovered mirrors from
+either the mutable mirror or one selected snapshot, seeds only locally verified
+LFS payloads, reports exact gaps, refuses overwrites, and cleans failed staging.
+Local integration coverage includes both Git sources, both destination modes,
+atomic failure behavior, republishing with `git push --mirror`, declared-partial
+LFS recovery, and a conditional real Git LFS checkout.
+
+**Phase 6 review hardening 2026-08-21:** Ref-less mirrors now skip bundle
+creation with a warning; bundle-creation failures use general rather than
+verification exit status. Historical LFS pointer discovery streams the object
+walk and uses two `cat-file` batch processes instead of one process per small
+blob. Snapshot creation performs a best-effort space preflight, treats corrupt
+archived LFS payloads as publication-blocking integrity failures, and disables
+further reflink attempts after the first same-filesystem failure. Verification
+reconciles the manifest index with published subtrees and records complete or
+declared-partial outcomes explicitly. Restore reports missing snapshot IDs as
+configuration errors, tolerates unwritable report media after publishing, and
+uses reflinks or independent copies for writable destinations. Documentation
+now distinguishes Git and LFS republishing and describes deep-verification peak
+space. Shared hashing, reflink, and read-only cleanup primitives live in
+`filesystem.py`; copy policies remain operation-specific by design.
+
+**Phase 6 re-review hardening 2026-08-21:** Snapshot space estimation now
+probes same-volume hard-link support, counts payload bytes only when copying may
+be required, and uses metadata rather than an extra content-hash pass.
+`--quick --deep` is rejected while `--full --deep` remains valid. Snapshot
+index drift is a warning because published subtrees are self-describing;
+malformed index data still fails verification, and the next successful
+snapshot rebuilds the index from published records. Snapshot staging setup and
+report persistence return structured results on write failures, report-warning
+deduplication uses one shared helper, and batched blob reads honor the runner's
+timeout. Corrupt archived LFS content remains publication-blocking by contract,
+with the refetch remedy and integrity-specific exit behavior documented.
+
+**Phase 6 publication-boundary hardening 2026-08-21:** The verified subtree
+rename is now the snapshot publication commit point. A later manifest-index
+write failure returns success with a warning naming the published path instead
+of misreporting the snapshot as failed. Index rebuild warnings name unreadable
+or invalid existing records. This change initially rejected all unexpected
+snapshot-root entries; the follow-up below calibrates that behavior.
+Permission-denied staging setup maps to configuration exit 2 while disk and
+other I/O failures retain general failure semantics. The normative Phase 6
+contract and user documentation describe the non-transactional index boundary.
+
+**Phase 6 sidecar-calibration follow-up 2026-08-21:** Unrecorded entries at a
+snapshot root now produce named verification and restore-source warnings
+instead of disabling an otherwise intact recovery unit. Required-path
+collisions and missing or corrupt recorded LFS payloads remain verification
+failures.
+
+Regression coverage exercises archive verification, offline restore with a
+common OS sidecar, and the fatal non-directory `lfs` collision.
+
+**Phase 6 payload-sidecar follow-up 2026-08-22:** Unrecorded files within
+`lfs/objects` now receive the same named warning treatment as snapshot-root
+sidecars and no longer block offline restore. Missing or corrupt recorded OIDs
+remain fatal. Creation treats every warning in its short-lived, tool-controlled
+staging subtree as a publication-blocking verification failure. Regression
+coverage includes nested payload sidecars, recovered-mirror restore, a missing
+recorded payload, and staging-warning rejection.
+
+**Phase 6 final review polish 2026-08-22:** Verification now also names
+unrecorded entries directly under `lfs/`, removing the silent gap between
+snapshot-root and `lfs/objects` sidecar reporting. The existing offline restore
+matrix covers all three levels while continuing to seed only recorded payloads.
 
 **Exit criterion:** A disconnected archive can produce a verified bundle, a
 normal working clone, an LFS-aware checkout where applicable, and a mirror that
@@ -454,10 +547,10 @@ introduces each behavior.
 
 ### Final acceptance work
 
-- [ ] Confirm automated coverage for bundle creation and verification.
-- [ ] Confirm offline restoration from both a mirror and a selected bundle.
-- [ ] Confirm recovered-mirror behavior suitable for `git push --mirror`.
-- [ ] Confirm conditional LFS archive and restore tests run when Git LFS is
+- [x] Confirm automated coverage for bundle creation and verification.
+- [x] Confirm offline restoration from both a mirror and a selected bundle.
+- [x] Confirm recovered-mirror behavior suitable for `git push --mirror`.
+- [x] Confirm conditional LFS archive and restore tests run when Git LFS is
   installed and skip clearly otherwise.
 - [ ] Keep network-dependent tests separate from the default suite.
 - [ ] Exercise create -> update -> verify -> snapshot -> offline restore in one

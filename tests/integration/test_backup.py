@@ -12,10 +12,10 @@ import pytest
 
 from repo_archive.archive import (
     ArchiveLayout,
-    _remove_readonly,
     backup_archive,
     update_archive,
 )
+from repo_archive.filesystem import remove_readonly
 from repo_archive.git import CommandResult, GitRunner
 from repo_archive.inspection import info_archive, verify_archive
 from repo_archive.manifest import Manifest, load_manifest, write_json_atomic
@@ -171,7 +171,7 @@ def test_quick_verification_rejects_a_non_bare_mirror(tmp_path: Path) -> None:
     remote, _ = create_remote(tmp_path)
     layout = ArchiveLayout(tmp_path / "archives" / "project")
     assert backup_archive(str(remote), layout).outcome is Outcome.COMPLETE
-    shutil.rmtree(layout.mirror_path, onerror=_remove_readonly)
+    shutil.rmtree(layout.mirror_path, onerror=remove_readonly)
     git("clone", str(remote), str(layout.mirror_path))
 
     verification = verify_archive(layout, full=False)
@@ -242,6 +242,9 @@ def test_no_lfs_marks_historical_lfs_use_as_partial(tmp_path: Path) -> None:
     assert manifest.lfs["reason"] == "disabled"
     verification = verify_archive(layout)
     assert verification.outcome is Outcome.PARTIAL
+    verified_manifest = load_manifest(layout.manifest_path)
+    assert verified_manifest.archive["last_verification_outcome"] == "partial"
+    assert verified_manifest.archive["last_verification_mode"] == "full"
 
 
 def test_nested_lfs_attributes_are_detected(tmp_path: Path) -> None:
