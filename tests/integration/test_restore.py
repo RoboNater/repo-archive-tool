@@ -157,6 +157,7 @@ def test_snapshot_restore_warns_about_unrecorded_lfs_payload_entries(
         path.parent for path in layout.snapshots_path.glob("*/snapshot.json")
     )
     objects_root = snapshot_path / "lfs" / "objects"
+    (snapshot_path / "lfs" / ".DS_Store").write_text("sidecar", encoding="utf-8")
     (objects_root / ".DS_Store").write_text("sidecar", encoding="utf-8")
     (objects_root / oid[:2] / oid[2:4] / ".DS_Store").write_text(
         "nested sidecar", encoding="utf-8"
@@ -166,6 +167,7 @@ def test_snapshot_restore_warns_about_unrecorded_lfs_payload_entries(
 
     assert verified.outcome == "verified-complete"
     assert len(verified.warnings) == 1
+    assert "lfs/.DS_Store" in verified.warnings[0]
     assert "lfs/objects/.DS_Store" in verified.warnings[0]
     assert f"lfs/objects/{oid[:2]}/{oid[2:4]}/.DS_Store" in verified.warnings[0]
 
@@ -183,6 +185,7 @@ def test_snapshot_restore_warns_about_unrecorded_lfs_payload_entries(
         item for item in result.components if item.name == "restore source"
     )
     assert source_component.status is ComponentStatus.WARNING
+    assert "lfs/.DS_Store" in (source_component.message or "")
     assert "lfs/objects/.DS_Store" in (source_component.message or "")
     restored_object = destination / "lfs" / "objects" / oid[:2] / oid[2:4] / oid
     assert restored_object.read_bytes() == payload

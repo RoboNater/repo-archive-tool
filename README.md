@@ -169,10 +169,10 @@ well as the aggregate exit code.
   index write fails after publication, the operation warns and names the
   published path rather than reporting the verified snapshot as failed.
   Unrecorded root sidecars are named as verification warnings but do not block
-  restore. Unrecorded files under `lfs/objects` follow the same rule; missing
-  or corrupt recorded payloads and collisions with required snapshot paths
-  remain verification failures. Creation refuses to publish a staged snapshot
-  with any verification warning.
+  restore. Unrecorded entries directly under `lfs/` and files under
+  `lfs/objects` follow the same rule; missing or corrupt recorded payloads and
+  collisions with required snapshot paths remain verification failures.
+  Creation refuses to publish a staged snapshot with any verification warning.
 - Restore: working clones and recovered mirrors can use either `mirror.git` or
   a selected snapshot. A partial source restores Git history and reports its
   exact LFS gap; missing Git LFS tooling leaves pointer files in a working clone

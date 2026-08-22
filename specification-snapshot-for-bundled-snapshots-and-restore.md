@@ -130,8 +130,9 @@ Verification of an already-published snapshot must:
 - run `git bundle verify` and confirm the bundle refs match `snapshot.json`;
 - SHA-256 hash every present LFS object rather than check presence alone; and
 - confirm that every recorded present LFS payload exists and that the present
-  and unavailable sets exactly cover the required inventory. Unrecorded files
-  under `lfs/objects` are warnings rather than missing or corrupt payloads.
+  and unavailable sets exactly cover the required inventory. Unrecorded entries
+  directly under `lfs/` and unrecorded files under `lfs/objects` are warnings
+  rather than missing or corrupt payloads.
 
 Routine published-snapshot verification uses the recorded required-OID set.
 Independent recomputation from the bundle is required only in an explicit deep
@@ -144,11 +145,12 @@ is valid and its unavailable-OID set is exact. Missing, corrupt, or unreadable
 recorded content fails verification; during creation, that failure prevents
 publication.
 
-Unrecorded sidecars at the snapshot root or under `lfs/objects` do not alter
-the recovery unit and must not make an otherwise verified snapshot
-unrestorable. Verification and restore report them by name, while restore
-continues using only the recorded bundle and LFS payload. A missing recorded
-payload or a payload whose content does not hash to its OID remains a failure.
+Unrecorded sidecars at the snapshot root, directly under `lfs/`, or under
+`lfs/objects` do not alter the recovery unit and must not make an otherwise
+verified snapshot unrestorable. Verification and restore report them by name,
+while restore continues using only the recorded bundle and LFS payload. A
+missing recorded payload or a payload whose content does not hash to its OID
+remains a failure.
 
 Restore from a complete snapshot must support an offline working clone and a
 recovered mirror without external LFS content. Restore from a partial snapshot

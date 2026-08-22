@@ -500,6 +500,7 @@ snapshot root now produce named verification and restore-source warnings
 instead of disabling an otherwise intact recovery unit. Required-path
 collisions and missing or corrupt recorded LFS payloads remain verification
 failures.
+
 Regression coverage exercises archive verification, offline restore with a
 common OS sidecar, and the fatal non-directory `lfs` collision.
 
@@ -510,6 +511,11 @@ remain fatal. Creation treats every warning in its short-lived, tool-controlled
 staging subtree as a publication-blocking verification failure. Regression
 coverage includes nested payload sidecars, recovered-mirror restore, a missing
 recorded payload, and staging-warning rejection.
+
+**Phase 6 final review polish 2026-08-22:** Verification now also names
+unrecorded entries directly under `lfs/`, removing the silent gap between
+snapshot-root and `lfs/objects` sidecar reporting. The existing offline restore
+matrix covers all three levels while continuing to seed only recorded payloads.
 
 **Exit criterion:** A disconnected archive can produce a verified bundle, a
 normal working clone, an LFS-aware checkout where applicable, and a mirror that

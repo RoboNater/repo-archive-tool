@@ -497,7 +497,17 @@ def _verify_lfs_record(snapshot_path: Path, lfs: dict[str, Any]) -> tuple[str, .
     if lfs["unavailable_object_count"] != len(unavailable):
         raise SnapshotError("Recorded unavailable LFS object count is incorrect.")
 
-    objects_root = snapshot_path / "lfs" / "objects"
+    lfs_root = snapshot_path / "lfs"
+    unexpected_entries = (
+        sorted(
+            path.relative_to(snapshot_path).as_posix()
+            for path in lfs_root.iterdir()
+            if path.name != "objects"
+        )
+        if lfs_root.is_dir()
+        else []
+    )
+    objects_root = lfs_root / "objects"
     if objects_root.exists() and not objects_root.is_dir():
         raise SnapshotError("Snapshot LFS objects path is not a directory.")
     actual_paths: dict[str, str] = {}
@@ -513,11 +523,12 @@ def _verify_lfs_record(snapshot_path: Path, lfs: dict[str, Any]) -> tuple[str, .
             "Snapshot LFS subtree is missing recorded payloads: "
             + ", ".join(missing_paths)
         )
-    unexpected_paths = sorted(
-        actual
+    unexpected_entries.extend(
+        f"lfs/objects/{actual}"
         for normalized, actual in actual_paths.items()
         if normalized not in expected_paths
     )
+    unexpected_entries.sort()
 
     logical_bytes = 0
     for oid in sorted(present):
@@ -544,12 +555,10 @@ def _verify_lfs_record(snapshot_path: Path, lfs: dict[str, Any]) -> tuple[str, .
     status = "partial" if unavailable else "complete"
     if status != lfs.get("status", status):
         raise SnapshotError("Snapshot LFS status is inconsistent.")
-    if unexpected_paths:
+    if unexpected_entries:
         return (
-            "Snapshot LFS objects contain unrecorded entries outside the recovery "
-            "inventory: "
-            + ", ".join(f"lfs/objects/{path}" for path in unexpected_paths)
-            + ".",
+            "Snapshot LFS subtree contains unrecorded entries outside the recovery "
+            "inventory: " + ", ".join(unexpected_entries) + ".",
         )
     return ()
 
