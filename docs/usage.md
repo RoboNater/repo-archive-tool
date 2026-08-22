@@ -205,7 +205,10 @@ record that could not be read. Snapshot verification rejects files or
 directories that collide with required paths or the recorded payload
 inventory. Other unrecorded root entries, including operating-system sidecar
 files, are named in a verification warning but do not make the recorded
-recovery unit unrestorable.
+recovery unit unrestorable. The same rule applies to unrecorded files under
+`lfs/objects`: they are named and ignored, while every recorded payload must
+still exist and hash to its OID. Snapshot creation treats any such warning in
+its tool-controlled staging tree as a failure and does not publish it.
 
 ## Restore offline
 
@@ -228,9 +231,9 @@ Snapshot selection accepts a single timestamp directory name under
 only archived recovery data required: snapshot restore still works if the
 mutable mirror and archive manifest are unavailable.
 
-Unrecorded sidecar entries at the snapshot root are reported as restore-source
-warnings and ignored. Restore still requires the recorded bundle, record, and
-LFS inventory to pass their integrity checks.
+Unrecorded sidecar entries at the snapshot root or under `lfs/objects` are
+reported as restore-source warnings and ignored. Restore still requires the
+recorded bundle, record, and LFS inventory to pass their integrity checks.
 
 If recovery media is read-only, restore still publishes a successfully
 validated destination and returns a warning when it cannot update that

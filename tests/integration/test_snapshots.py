@@ -184,6 +184,32 @@ def test_materialization_failure_never_publishes_staging(tmp_path: Path) -> None
     assert not list(layout.snapshots_path.glob(".*.tmp-*"))
 
 
+def test_staging_verification_warnings_prevent_snapshot_publication(
+    tmp_path: Path,
+) -> None:
+    remote, _ = create_remote(tmp_path)
+    layout = ArchiveLayout(tmp_path / "archives" / "project")
+    assert backup_archive(str(remote), layout).outcome is Outcome.COMPLETE
+
+    def write_record_with_unexpected_entry(path: Path, value: object) -> None:
+        write_json_atomic(path, value)
+        if path.name == "snapshot.json":
+            (path.parent / "tool-bug.tmp").write_text("unexpected", encoding="utf-8")
+
+    with patch(
+        "repo_archive.snapshots.write_json_atomic",
+        side_effect=write_record_with_unexpected_entry,
+    ):
+        result = create_snapshot(layout)
+
+    assert result.outcome is Outcome.FAILED
+    assert result.exit_code == 4
+    assert "Staged snapshot verification produced warnings" in result.errors[0]
+    assert "tool-bug.tmp" in result.errors[0]
+    assert not list(layout.snapshots_path.glob("*/snapshot.json"))
+    assert not list(layout.snapshots_path.glob(".*.tmp-*"))
+
+
 def test_empty_archive_skips_snapshot_without_failing_backup(tmp_path: Path) -> None:
     remote = tmp_path / "empty.git"
     git("init", "--bare", str(remote))

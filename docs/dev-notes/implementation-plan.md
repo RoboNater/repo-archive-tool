@@ -1,7 +1,7 @@
 # repo-archive-tool Implementation Plan
 
 **Status:** In progress
-**Last reviewed:** 2026-08-21
+**Last reviewed:** 2026-08-22
 **Governing specification:** [`repo-archive-tool-spec.md`](../../repo-archive-tool-spec.md)
 
 This is the working implementation plan for `repo-archive-tool`. Keep it aligned with the repository as design decisions are made and phases are completed. The specification defines product requirements; this document records the intended implementation sequence and current project state.
@@ -498,9 +498,18 @@ contract and user documentation describe the non-transactional index boundary.
 **Phase 6 sidecar-calibration follow-up 2026-08-21:** Unrecorded entries at a
 snapshot root now produce named verification and restore-source warnings
 instead of disabling an otherwise intact recovery unit. Required-path
-collisions and recorded LFS-inventory mismatches remain verification failures.
+collisions and missing or corrupt recorded LFS payloads remain verification
+failures.
 Regression coverage exercises archive verification, offline restore with a
 common OS sidecar, and the fatal non-directory `lfs` collision.
+
+**Phase 6 payload-sidecar follow-up 2026-08-22:** Unrecorded files within
+`lfs/objects` now receive the same named warning treatment as snapshot-root
+sidecars and no longer block offline restore. Missing or corrupt recorded OIDs
+remain fatal. Creation treats every warning in its short-lived, tool-controlled
+staging subtree as a publication-blocking verification failure. Regression
+coverage includes nested payload sidecars, recovered-mirror restore, a missing
+recorded payload, and staging-warning rejection.
 
 **Exit criterion:** A disconnected archive can produce a verified bundle, a
 normal working clone, an LFS-aware checkout where applicable, and a mirror that

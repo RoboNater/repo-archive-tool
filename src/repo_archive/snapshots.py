@@ -167,6 +167,11 @@ def create_snapshot(
         verified = verify_snapshot_path(staging_path, runner=runner, deep=True)
         if not verified.succeeded:
             raise SnapshotError(verified.message)
+        if verified.warnings:
+            raise SnapshotError(
+                "Staged snapshot verification produced warnings: "
+                + " ".join(verified.warnings)
+            )
 
         staging_path.rename(final_path)
         relative_path = final_path.relative_to(layout.path).as_posix()
@@ -326,7 +331,7 @@ def verify_snapshot_path(
             if actual_refs != record["refs"]:
                 raise SnapshotError("Bundle refs do not match snapshot.json.")
 
-            _verify_lfs_record(snapshot_path, record["lfs"])
+            warnings += _verify_lfs_record(snapshot_path, record["lfs"])
             if record["status"] != record["lfs"]["status"]:
                 raise SnapshotError("Snapshot and LFS statuses are inconsistent.")
 
@@ -475,7 +480,7 @@ def _materialize_lfs_payload(
     }
 
 
-def _verify_lfs_record(snapshot_path: Path, lfs: dict[str, Any]) -> None:
+def _verify_lfs_record(snapshot_path: Path, lfs: dict[str, Any]) -> tuple[str, ...]:
     if lfs["objects_path"] != "lfs/objects":
         raise SnapshotError("Snapshot LFS object path is invalid.")
     required = set(lfs["required_oids"])
@@ -493,16 +498,26 @@ def _verify_lfs_record(snapshot_path: Path, lfs: dict[str, Any]) -> None:
         raise SnapshotError("Recorded unavailable LFS object count is incorrect.")
 
     objects_root = snapshot_path / "lfs" / "objects"
-    actual: set[str] = set()
+    if objects_root.exists() and not objects_root.is_dir():
+        raise SnapshotError("Snapshot LFS objects path is not a directory.")
+    actual_paths: dict[str, str] = {}
     if objects_root.is_dir():
         for path in objects_root.rglob("*"):
             if path.is_file():
-                actual.add(path.relative_to(objects_root).as_posix().lower())
+                relative = path.relative_to(objects_root).as_posix()
+                actual_paths[relative.lower()] = relative
     expected_paths = {f"{oid[:2]}/{oid[2:4]}/{oid}" for oid in present}
-    if actual != expected_paths:
+    missing_paths = sorted(expected_paths - actual_paths.keys())
+    if missing_paths:
         raise SnapshotError(
-            "Snapshot LFS subtree does not match its recorded inventory."
+            "Snapshot LFS subtree is missing recorded payloads: "
+            + ", ".join(missing_paths)
         )
+    unexpected_paths = sorted(
+        actual
+        for normalized, actual in actual_paths.items()
+        if normalized not in expected_paths
+    )
 
     logical_bytes = 0
     for oid in sorted(present):
@@ -529,6 +544,14 @@ def _verify_lfs_record(snapshot_path: Path, lfs: dict[str, Any]) -> None:
     status = "partial" if unavailable else "complete"
     if status != lfs.get("status", status):
         raise SnapshotError("Snapshot LFS status is inconsistent.")
+    if unexpected_paths:
+        return (
+            "Snapshot LFS objects contain unrecorded entries outside the recovery "
+            "inventory: "
+            + ", ".join(f"lfs/objects/{path}" for path in unexpected_paths)
+            + ".",
+        )
+    return ()
 
 
 def _verify_snapshot_root(snapshot_path: Path) -> tuple[str, ...]:

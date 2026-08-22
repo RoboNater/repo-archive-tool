@@ -16,7 +16,7 @@ from repo_archive.filesystem import remove_readonly
 from repo_archive.git import GitRunner
 from repo_archive.restore import RestoreError, restore_archive
 from repo_archive.results import ComponentStatus, Outcome
-from repo_archive.snapshots import create_snapshot
+from repo_archive.snapshots import create_snapshot, verify_snapshot_path
 
 
 def git(*arguments: str, cwd: Path | None = None) -> str:
@@ -136,6 +136,61 @@ def test_snapshot_restore_reports_unexpected_root_entries_without_refusing_recov
     )
     assert source_component.status is ComponentStatus.WARNING
     assert ".DS_Store" in (source_component.message or "")
+
+
+def test_snapshot_restore_warns_about_unrecorded_lfs_payload_entries(
+    tmp_path: Path,
+) -> None:
+    remote, worktree = create_remote(tmp_path)
+    payload = b"available sidecar-test payload\n"
+    oid = commit_pointer(worktree, payload)
+    layout = ArchiveLayout(tmp_path / "archives" / "project")
+    assert (
+        backup_archive(str(remote), layout, lfs_enabled=False).outcome
+        is Outcome.PARTIAL
+    )
+    archived_object = layout.mirror_path / "lfs" / "objects" / oid[:2] / oid[2:4] / oid
+    archived_object.parent.mkdir(parents=True)
+    archived_object.write_bytes(payload)
+    assert create_snapshot(layout).outcome is Outcome.COMPLETE
+    snapshot_path = next(
+        path.parent for path in layout.snapshots_path.glob("*/snapshot.json")
+    )
+    objects_root = snapshot_path / "lfs" / "objects"
+    (objects_root / ".DS_Store").write_text("sidecar", encoding="utf-8")
+    (objects_root / oid[:2] / oid[2:4] / ".DS_Store").write_text(
+        "nested sidecar", encoding="utf-8"
+    )
+
+    verified = verify_snapshot_path(snapshot_path)
+
+    assert verified.outcome == "verified-complete"
+    assert len(verified.warnings) == 1
+    assert "lfs/objects/.DS_Store" in verified.warnings[0]
+    assert f"lfs/objects/{oid[:2]}/{oid[2:4]}/.DS_Store" in verified.warnings[0]
+
+    shutil.rmtree(layout.mirror_path, onerror=remove_readonly)
+    layout.manifest_path.unlink()
+    destination = tmp_path / "sidecar-recovered.git"
+
+    result = restore_archive(
+        layout, destination, snapshot=snapshot_path.name, recovered_mirror=True
+    )
+
+    assert result.outcome is Outcome.COMPLETE_WITH_WARNINGS
+    assert result.exit_code == 0
+    source_component = next(
+        item for item in result.components if item.name == "restore source"
+    )
+    assert source_component.status is ComponentStatus.WARNING
+    assert "lfs/objects/.DS_Store" in (source_component.message or "")
+    restored_object = destination / "lfs" / "objects" / oid[:2] / oid[2:4] / oid
+    assert restored_object.read_bytes() == payload
+
+    (snapshot_path / "lfs" / "objects" / oid[:2] / oid[2:4] / oid).unlink()
+    missing = verify_snapshot_path(snapshot_path)
+    assert missing.outcome == "failed"
+    assert "missing recorded payloads" in missing.message
 
 
 def test_recovered_mirrors_can_be_republished_from_both_sources(
