@@ -15,7 +15,7 @@ from repo_archive.archive import ArchiveLayout, backup_archive
 from repo_archive.filesystem import remove_readonly
 from repo_archive.git import GitRunner
 from repo_archive.restore import RestoreError, restore_archive
-from repo_archive.results import Outcome
+from repo_archive.results import ComponentStatus, Outcome
 from repo_archive.snapshots import create_snapshot
 
 
@@ -110,6 +110,32 @@ def test_working_clone_restores_from_snapshot_without_mirror(tmp_path: Path) -> 
     assert result.outcome is Outcome.COMPLETE
     assert (destination / "README.md").is_file()
     assert git("show-ref", "--verify", "refs/tags/v1", cwd=destination)
+
+
+def test_snapshot_restore_reports_unexpected_root_entries_without_refusing_recovery(
+    tmp_path: Path,
+) -> None:
+    remote, _ = create_remote(tmp_path)
+    layout = ArchiveLayout(tmp_path / "archives" / "project")
+    assert backup_archive(str(remote), layout).outcome is Outcome.COMPLETE
+    created_at = datetime(2026, 8, 21, 14, 30, tzinfo=UTC)
+    assert create_snapshot(layout, created_at=created_at).outcome is Outcome.COMPLETE
+    snapshot_path = layout.snapshots_path / "2026-08-21T143000.000000Z"
+    (snapshot_path / ".DS_Store").write_text("sidecar", encoding="utf-8")
+    shutil.rmtree(layout.mirror_path, onerror=remove_readonly)
+    layout.manifest_path.unlink()
+    destination = tmp_path / "snapshot-restore-with-sidecar"
+
+    result = restore_archive(layout, destination, snapshot=snapshot_path.name)
+
+    assert result.outcome is Outcome.COMPLETE_WITH_WARNINGS
+    assert result.exit_code == 0
+    assert (destination / "README.md").is_file()
+    source_component = next(
+        item for item in result.components if item.name == "restore source"
+    )
+    assert source_component.status is ComponentStatus.WARNING
+    assert ".DS_Store" in (source_component.message or "")
 
 
 def test_recovered_mirrors_can_be_republished_from_both_sources(

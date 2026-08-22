@@ -45,6 +45,7 @@ class SnapshotVerification:
 
     outcome: str
     message: str
+    warnings: tuple[str, ...] = ()
 
     @property
     def succeeded(self) -> bool:
@@ -292,8 +293,9 @@ def verify_snapshot_path(
 ) -> SnapshotVerification:
     """Verify a published or staged snapshot subtree against its record."""
     runner = runner or GitRunner()
+    warnings: tuple[str, ...] = ()
     try:
-        _verify_snapshot_root(snapshot_path)
+        warnings = _verify_snapshot_root(snapshot_path)
         record = _load_snapshot_record(snapshot_path / "snapshot.json")
         bundle_path = _record_path(snapshot_path, record["bundle"]["path"])
         if not bundle_path.is_file():
@@ -351,7 +353,10 @@ def verify_snapshot_path(
         return SnapshotVerification("failed", str(error))
 
     outcome = str(record["verification"])
-    return SnapshotVerification(outcome, f"Snapshot passed as {outcome}.")
+    message = f"Snapshot passed as {outcome}."
+    if warnings:
+        message += " " + " ".join(warnings)
+    return SnapshotVerification(outcome, message, warnings)
 
 
 def discover_snapshot_paths(layout: ArchiveLayout) -> list[Path]:
@@ -526,18 +531,20 @@ def _verify_lfs_record(snapshot_path: Path, lfs: dict[str, Any]) -> None:
         raise SnapshotError("Snapshot LFS status is inconsistent.")
 
 
-def _verify_snapshot_root(snapshot_path: Path) -> None:
+def _verify_snapshot_root(snapshot_path: Path) -> tuple[str, ...]:
     allowed = {"snapshot.bundle", "snapshot.json", "lfs"}
     unexpected = sorted(
         path.name for path in snapshot_path.iterdir() if path.name not in allowed
     )
-    if unexpected:
-        raise SnapshotError(
-            "Snapshot root contains unexpected entries: " + ", ".join(unexpected)
-        )
     lfs_path = snapshot_path / "lfs"
     if lfs_path.exists() and not lfs_path.is_dir():
         raise SnapshotError("Snapshot root lfs entry is not a directory.")
+    if unexpected:
+        return (
+            "Snapshot root contains unexpected entries outside the recorded "
+            "recovery unit: " + ", ".join(unexpected) + ".",
+        )
+    return ()
 
 
 def _load_snapshot_record(path: Path) -> dict[str, Any]:

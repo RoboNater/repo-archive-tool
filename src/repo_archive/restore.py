@@ -43,6 +43,7 @@ class RestoreSource:
     present_oids: tuple[str, ...]
     unavailable_oids: tuple[str, ...]
     description: str
+    warnings: tuple[str, ...] = ()
 
 
 class RestoreError(RuntimeError):
@@ -143,7 +144,11 @@ def restore_archive(
         layout.path,
         components=(
             ComponentResult(
-                "restore source", ComponentStatus.COMPLETE, source.description
+                "restore source",
+                ComponentStatus.WARNING
+                if source.warnings
+                else ComponentStatus.COMPLETE,
+                source.description,
             ),
             ComponentResult(
                 "git restore",
@@ -191,13 +196,17 @@ def _select_source(
             )
         record = load_snapshot_record(snapshot_path)
         lfs = record["lfs"]
+        description = f"Verified {record['status']} snapshot {snapshot}."
+        if verified.warnings:
+            description += " " + " ".join(verified.warnings)
         return RestoreSource(
             git_path=snapshot_path / str(record["bundle"]["path"]),
             lfs_objects_path=snapshot_path / str(lfs["objects_path"]),
             required_oids=tuple(lfs["required_oids"]),
             present_oids=tuple(lfs["present_oids"]),
             unavailable_oids=tuple(lfs["unavailable_oids"]),
-            description=f"Verified {record['status']} snapshot {snapshot}.",
+            description=description,
+            warnings=verified.warnings,
         )
 
     bare = runner.git("rev-parse", "--is-bare-repository", cwd=layout.mirror_path)

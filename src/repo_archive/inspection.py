@@ -316,7 +316,11 @@ def _verify_bundles(
     for path in snapshots:
         verified = verify_snapshot_path(path, runner=runner, deep=deep)
         if verified.outcome == "verified-complete":
-            status = ComponentStatus.COMPLETE
+            status = (
+                ComponentStatus.WARNING
+                if verified.warnings
+                else ComponentStatus.COMPLETE
+            )
             kind = None
         elif verified.outcome == "verified-partial":
             status = ComponentStatus.PARTIAL

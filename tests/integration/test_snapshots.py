@@ -16,7 +16,7 @@ from repo_archive.filesystem import remove_readonly, safe_sha256_file
 from repo_archive.git import CommandResult, GitRunner
 from repo_archive.inspection import verify_archive
 from repo_archive.manifest import load_manifest, write_json_atomic
-from repo_archive.results import Outcome
+from repo_archive.results import ComponentStatus, Outcome
 from repo_archive.snapshots import (
     create_snapshot,
     load_snapshot_record,
@@ -429,7 +429,9 @@ def test_snapshot_index_rebuild_names_skipped_records(tmp_path: Path) -> None:
     assert "record is unreadable" in (manifest_component.message or "")
 
 
-def test_snapshot_verification_rejects_unexpected_root_entries(tmp_path: Path) -> None:
+def test_snapshot_verification_warns_about_unexpected_root_entries(
+    tmp_path: Path,
+) -> None:
     remote, _ = create_remote(tmp_path)
     layout = ArchiveLayout(tmp_path / "archives" / "project")
     assert backup_archive(str(remote), layout).outcome is Outcome.COMPLETE
@@ -441,8 +443,43 @@ def test_snapshot_verification_rejects_unexpected_root_entries(tmp_path: Path) -
 
     verified = verify_snapshot_path(snapshot_path)
 
+    assert verified.outcome == "verified-complete"
+    assert verified.succeeded
+    assert ".lfs-hardlink-probe" in verified.message
+    assert verified.warnings
+
+    archive_result = verify_archive(layout)
+
+    assert archive_result.outcome is Outcome.COMPLETE_WITH_WARNINGS
+    assert archive_result.exit_code == 0
+    snapshot_component = next(
+        item
+        for item in archive_result.components
+        if item.name == f"snapshot {snapshot_path.name}"
+    )
+    assert snapshot_component.status is ComponentStatus.WARNING
+    assert ".lfs-hardlink-probe" in (snapshot_component.message or "")
+
+
+def test_snapshot_verification_rejects_non_directory_lfs_root_entry(
+    tmp_path: Path,
+) -> None:
+    remote, _ = create_remote(tmp_path)
+    layout = ArchiveLayout(tmp_path / "archives" / "project")
+    assert backup_archive(str(remote), layout).outcome is Outcome.COMPLETE
+    assert create_snapshot(layout).outcome is Outcome.COMPLETE
+    snapshot_path = next(
+        path.parent for path in layout.snapshots_path.glob("*/snapshot.json")
+    )
+    lfs_path = snapshot_path / "lfs"
+    if lfs_path.is_dir():
+        shutil.rmtree(lfs_path)
+    lfs_path.write_text("collision", encoding="utf-8")
+
+    verified = verify_snapshot_path(snapshot_path)
+
     assert verified.outcome == "failed"
-    assert "unexpected entries: .lfs-hardlink-probe" in verified.message
+    assert "lfs entry is not a directory" in verified.message
 
 
 def test_verification_rejects_a_malformed_manifest_snapshot_index(

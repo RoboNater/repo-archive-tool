@@ -201,8 +201,11 @@ no archive operation is running. The subtree rename is the publication commit
 point: if the later manifest-index write fails, `snapshot` returns
 `complete-with-warnings` and names the published path rather than incorrectly
 claiming that no snapshot was created. Rebuild warnings also name any existing
-record that could not be read. Snapshot verification rejects unexpected files
-or directories at the subtree root.
+record that could not be read. Snapshot verification rejects files or
+directories that collide with required paths or the recorded payload
+inventory. Other unrecorded root entries, including operating-system sidecar
+files, are named in a verification warning but do not make the recorded
+recovery unit unrestorable.
 
 ## Restore offline
 
@@ -224,6 +227,10 @@ Snapshot selection accepts a single timestamp directory name under
 `snapshots/`, never an arbitrary filesystem path. The selected subtree is the
 only archived recovery data required: snapshot restore still works if the
 mutable mirror and archive manifest are unavailable.
+
+Unrecorded sidecar entries at the snapshot root are reported as restore-source
+warnings and ignored. Restore still requires the recorded bundle, record, and
+LFS inventory to pass their integrity checks.
 
 If recovery media is read-only, restore still publishes a successfully
 validated destination and returns a warning when it cannot update that

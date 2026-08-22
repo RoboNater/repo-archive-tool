@@ -489,10 +489,18 @@ with the refetch remedy and integrity-specific exit behavior documented.
 rename is now the snapshot publication commit point. A later manifest-index
 write failure returns success with a warning naming the published path instead
 of misreporting the snapshot as failed. Index rebuild warnings name unreadable
-or invalid existing records, and verification rejects unexpected root entries.
+or invalid existing records. This change initially rejected all unexpected
+snapshot-root entries; the follow-up below calibrates that behavior.
 Permission-denied staging setup maps to configuration exit 2 while disk and
 other I/O failures retain general failure semantics. The normative Phase 6
 contract and user documentation describe the non-transactional index boundary.
+
+**Phase 6 sidecar-calibration follow-up 2026-08-21:** Unrecorded entries at a
+snapshot root now produce named verification and restore-source warnings
+instead of disabling an otherwise intact recovery unit. Required-path
+collisions and recorded LFS-inventory mismatches remain verification failures.
+Regression coverage exercises archive verification, offline restore with a
+common OS sidecar, and the fatal non-directory `lfs` collision.
 
 **Exit criterion:** A disconnected archive can produce a verified bundle, a
 normal working clone, an LFS-aware checkout where applicable, and a mirror that

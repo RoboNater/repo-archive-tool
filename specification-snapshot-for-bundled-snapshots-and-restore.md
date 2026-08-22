@@ -122,7 +122,9 @@ LFS OIDs from the included refs before publication.
 
 Verification of an already-published snapshot must:
 
-- reject unexpected entries at the snapshot subtree root;
+- report unexpected entries at the snapshot subtree root as warnings when they
+  are outside the recorded recovery unit, while rejecting entries that collide
+  with required snapshot paths or recorded payload inventory;
 - run `git bundle verify` and confirm the bundle refs match `snapshot.json`;
 - SHA-256 hash every present LFS object rather than check presence alone; and
 - confirm that the recorded present and unavailable sets exactly match the
@@ -138,6 +140,11 @@ A declared partial snapshot passes verification only when all present content
 is valid and its unavailable-OID set is exact. Unexpected missing, corrupt, or
 unreadable content fails verification; during creation, that failure prevents
 publication.
+
+Unrecorded root sidecars do not alter the recovery unit and must not make an
+otherwise verified snapshot unrestorable. Verification and restore report
+them by name, while restore continues using only the recorded bundle and LFS
+payload.
 
 Restore from a complete snapshot must support an offline working clone and a
 recovered mirror without external LFS content. Restore from a partial snapshot

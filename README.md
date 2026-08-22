@@ -168,6 +168,9 @@ well as the aggregate exit code.
   that convenience index from the self-describing published subtrees. If the
   index write fails after publication, the operation warns and names the
   published path rather than reporting the verified snapshot as failed.
+  Unrecorded root sidecars are named as verification warnings but do not block
+  restore; collisions with required snapshot paths or the recorded payload
+  inventory remain verification failures.
 - Restore: working clones and recovered mirrors can use either `mirror.git` or
   a selected snapshot. A partial source restores Git history and reports its
   exact LFS gap; missing Git LFS tooling leaves pointer files in a working clone
