@@ -12,7 +12,7 @@ from repo_archive.remote import derive_archive_path, normalize_remote
 
 
 def _write_manifest(path: Path, source: str) -> None:
-    path.mkdir(parents=True)
+    path.mkdir(parents=True, exist_ok=True)
     manifest = Manifest.new(normalize_remote(source))
     write_json_atomic(path / "manifest.json", manifest.to_dict())
 
@@ -51,10 +51,17 @@ def test_easy_mode_rejects_ambiguous_matching_legacy_paths(tmp_path: Path) -> No
         )
         _write_manifest(legacy, source)
 
-    with pytest.raises(ValueError, match="Multiple legacy archives"):
+    with pytest.raises(ValueError, match="--no-legacy-reuse"):
         resolve_backup_layout(
             tmp_path, normalize_remote("https://example.test/team/repo.git")
         )
+
+    easy = resolve_backup_layout(
+        tmp_path,
+        normalize_remote("https://example.test/team/repo.git"),
+        reuse_legacy=False,
+    )
+    assert easy.path == tmp_path / "example.test" / "team" / "repo"
 
 
 def test_pedantic_and_custom_modes_do_not_search_for_legacy_paths(
@@ -79,3 +86,45 @@ def test_easy_mode_reuses_a_local_legacy_path(tmp_path: Path) -> None:
     layout = resolve_backup_layout(tmp_path / "archives", remote)
 
     assert layout.path == legacy
+
+
+def test_easy_mode_refuses_to_nest_a_child_inside_an_existing_archive(
+    tmp_path: Path,
+) -> None:
+    parent_source = "https://gitlab.test/group/repo.git"
+    parent = derive_archive_path(tmp_path, normalize_remote(parent_source))
+    _write_manifest(parent, parent_source)
+
+    with pytest.raises(ValueError, match="nested inside"):
+        resolve_backup_layout(
+            tmp_path, normalize_remote("https://gitlab.test/group/repo/sub.git")
+        )
+
+
+def test_easy_mode_refuses_to_make_a_parent_of_an_existing_child_archive(
+    tmp_path: Path,
+) -> None:
+    child_source = "https://gitlab.test/group/repo/sub.git"
+    child = derive_archive_path(tmp_path, normalize_remote(child_source))
+    _write_manifest(child, child_source)
+
+    with pytest.raises(ValueError, match="would contain"):
+        resolve_backup_layout(
+            tmp_path, normalize_remote("https://gitlab.test/group/repo.git")
+        )
+
+
+def test_existing_parent_archive_refuses_an_already_nested_child(
+    tmp_path: Path,
+) -> None:
+    parent_source = "https://gitlab.test/group/repo.git"
+    child_source = "https://gitlab.test/group/repo/sub.git"
+    _write_manifest(
+        derive_archive_path(tmp_path, normalize_remote(parent_source)), parent_source
+    )
+    _write_manifest(
+        derive_archive_path(tmp_path, normalize_remote(child_source)), child_source
+    )
+
+    with pytest.raises(ValueError, match="would contain"):
+        resolve_backup_layout(tmp_path, normalize_remote(parent_source))

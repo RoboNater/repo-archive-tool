@@ -189,7 +189,9 @@ The exact on-disk layout may evolve, but:
 In easy mode, hosted remotes with the same host, explicit port, and repository
 path are the same logical repository even when their transport or SSH user
 differs. Local remotes retain their complete resolved path identity. Different
-ports or paths remain different identities.
+ports or paths remain different identities. Hosted repository paths are
+case-sensitive because the host-independent core cannot assume a provider's
+case-folding rules.
 
 Because filesystem-safe sanitization is lossy, two different sources can map
 to one easy path. Case-insensitive filesystems can introduce additional path
@@ -197,6 +199,11 @@ collisions. An existing archive may be updated only when its recorded or
 configured source has the same logical identity. Otherwise backup must stop
 with a configuration error and suggest `--name` or pedantic naming; it must
 never overwrite or update the conflicting archive.
+
+No resolved archive path may be an ancestor or descendant of another archive
+set under the same root. Resolution must detect `manifest.json` or `mirror.git`
+markers above or below the candidate and stop before staging, suggesting a
+custom name or pedantic naming.
 
 `--name NAME` selects the single custom path `<root>/<safe-name>` and is
 mutually exclusive with `--naming`. It retains the same source-identity
@@ -209,7 +216,9 @@ including when it was created through another transport or SSH user. Multiple
 matching legacy archives are ambiguous and must be selected explicitly with
 `update`; the tool does not rename or migrate archive directories
 automatically. If the easy destination already exists, it remains authoritative
-and normal collision validation applies.
+and normal collision validation applies. `--no-legacy-reuse` selects the easy
+destination without legacy discovery and is mutually exclusive with `--name`
+and `--naming`.
 
 Commands other than `backup` continue to accept an explicit archive path; they
 do not search by repository identity or short name.
@@ -293,6 +302,7 @@ Useful options:
 --root PATH
 --name NAME
 --naming easy|pedantic
+--no-legacy-reuse
 --no-lfs
 --bundle
 --metadata github
@@ -302,9 +312,9 @@ Useful options:
 
 `--no-lfs` must mean an intentional partial archive when LFS is present and must be reflected in status/reporting.
 
-Human-readable backup output must print the resolved archive path prominently.
-The stable JSON result continues to expose the same path through
-`archive_path`.
+Human-readable output for every archive-targeting operation must print the
+archive path prominently. The stable JSON result continues to expose the same
+path through `archive_path`.
 
 ### 8.2 Update an existing archive
 

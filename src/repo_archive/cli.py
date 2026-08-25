@@ -57,6 +57,11 @@ def build_parser() -> argparse.ArgumentParser:
         default="easy",
         help="archive path policy (default: easy)",
     )
+    naming.add_argument(
+        "--no-legacy-reuse",
+        action="store_true",
+        help="use the easy path without discovering digest-era archives",
+    )
     backup.add_argument(
         "--no-lfs",
         action="store_true",
@@ -145,6 +150,7 @@ def main() -> int:
                 remote,
                 name=arguments.name,
                 naming=arguments.naming,
+                reuse_legacy=not arguments.no_legacy_reuse,
             )
         except ValueError as error:
             result = _configuration_failure("backup", str(error))

@@ -1,7 +1,7 @@
 # repo-archive-tool Implementation Plan
 
 **Status:** In progress
-**Last reviewed:** 2026-08-24
+**Last reviewed:** 2026-08-25
 **Governing specification:** [`repo-archive-tool-spec.md`](../../repo-archive-tool-spec.md)
 
 This is the working implementation plan for `repo-archive-tool`. Keep it aligned with the repository as design decisions are made and phases are completed. The specification defines product requirements; this document records the intended implementation sequence and current project state.
@@ -34,7 +34,8 @@ This is the working implementation plan for `repo-archive-tool`. Keep it aligned
   for complete normalized-identity digests and a custom `--name` override.
   Treat transport and SSH user as access details for easy hosted identity, but
   retain host, explicit port, path, and complete local-path identity for
-  collision checks.
+  collision checks. Keep hosted repository paths case-sensitive because the
+  provider-neutral core cannot assume server-specific case folding.
 - Detect LFS attributes and submodule definitions across all archived,
   tree-bearing refs without requiring a worktree. Keep LFS storage inside
   `mirror.git/lfs`, and carry the previous store into staged updates before
@@ -143,6 +144,8 @@ the later phases.
 - [x] Provide default easy naming, opt-in pedantic digest naming, and in-place
   discovery of compatible legacy digest paths without weakening source
   collision checks.
+- [x] Prevent ancestor/descendant archive nesting and provide an explicit easy
+  path that bypasses ambiguous legacy discovery.
 - [x] Manage the archive-set layout: `mirror.git`, `manifest.json`, `reports`, `snapshots`, and `metadata`.
 - [x] Define schema-versioned manifest models and atomic JSON/text writers.
 - [x] Define structured component and operation results.
@@ -174,8 +177,8 @@ uses this contract while archive subcommands are implemented in Phase 2.
 - [x] Enumerate refs, branches, tags, symbolic `HEAD`, and the configured source remote.
 - [x] Populate manifest source, archive, and Git fields.
 - [x] Implement `update <archive-path>` using the same safe update path.
-- [x] Add `--root`, `--name`, `--naming`, `--no-lfs`, `--bundle`,
-  `--metadata`, `--json`, and `--verbose` plumbing as applicable.
+- [x] Add `--root`, `--name`, `--naming`, `--no-legacy-reuse`, `--no-lfs`,
+  `--bundle`, `--metadata`, `--json`, and `--verbose` plumbing as applicable.
 - [x] Classify authentication, invalid-repository, and integrity failures when the underlying tools provide reliable evidence; other transport errors remain general failures pending stable Git diagnostics.
 
 **Exit criterion:** A repository with multiple branches and tags can be archived and updated idempotently, deleted remote refs are pruned, and a failed update does not replace the last valid mirror.
@@ -213,6 +216,18 @@ the resolved path, while the JSON result shape is unchanged. Unit and local
 integration coverage exercises same-source reuse, sanitization collisions,
 transport/user identity, local collisions, custom names, pedantic paths, and
 legacy discovery.
+
+**Archive naming review hardening 2026-08-25:** Path resolution now rejects
+both orders of prefix collision: a new archive cannot be placed inside an
+existing archive, and a parent archive cannot be created around an existing
+child archive. Archive markers are checked before staging and errors direct
+users to custom or pedantic naming. `--no-legacy-reuse` is a mutually exclusive
+easy-path selection for users who intentionally want the easy destination when
+multiple digest-era archives match. Hosted path casing remains significant by
+provider-neutral contract and its cross-filesystem consequences are documented
+explicitly. Human output consistently leads with the archive path for every
+archive-targeting operation. Regression tests cover both nesting directions,
+the legacy bypass, parser exclusivity, and shared path rendering.
 
 ## Phase 3: Manifests, Reports, Info, and Verification
 

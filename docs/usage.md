@@ -41,8 +41,9 @@ Create an archive under a chosen root directory:
 repo-archive backup https://github.com/OWNER/REPO.git --root ./archives
 ```
 
-The command creates a native bare mirror in a deterministic archive-set path
-and begins normal human-readable output with the resolved path:
+The command creates a native bare mirror in a deterministic archive-set path.
+Human-readable output for every archive-targeting operation begins with the
+archive path:
 
 ```text
 ARCHIVE: <resolved-archive-path>
@@ -61,7 +62,7 @@ The default `easy` policy makes paths predictable. Hosted remotes retain their
 complete repository path:
 
 ```text
-<root>/<host>/<repository-path...>/<repository>/
+<root>/<host>/<repository-path>/
 ```
 
 Local remotes use `<root>/local/<repository>/`. The same default applies to
@@ -69,13 +70,24 @@ hosted and local sources even though local repository names collide more often.
 An easy hosted identity consists of host, explicit port, and repository path;
 transport and SSH user are access details, so HTTPS and SSH forms of the same
 host/path update the same archive. A local identity is its complete resolved
-filesystem path.
+filesystem path. Hosted repository paths remain case-sensitive because a
+host-independent tool cannot assume that every Git server follows GitHub's
+case-folding rules. Use consistent remote-path casing: on a case-sensitive
+filesystem, case-only spellings create different easy paths; on a
+case-insensitive filesystem, the second spelling produces a source-identity
+collision instead of updating the first.
 
 Filesystem-safe sanitization is lossy, and case-insensitive filesystems can
 make otherwise distinct names share a path. Before updating any occupied path,
 the tool compares source identity. A same-source backup updates normally; a
 different source produces exit code 2 without staging or changing the existing
 archive and suggests a custom name or pedantic naming.
+
+Easy naming can otherwise make one repository path a prefix of another, such
+as `group/repo` and `group/repo/sub`. Before staging, the tool refuses any path
+that would put a new archive above or below an existing archive marked by
+`manifest.json` or `mirror.git`. Use `--name` or pedantic naming to keep the
+archive sets disjoint.
 
 Pedantic naming preserves the previous digest-based behavior and incorporates
 the complete normalized remote identity, including transport and SSH user:
@@ -85,7 +97,7 @@ repo-archive backup https://github.com/OWNER/REPO.git --root ./archives --naming
 ```
 
 Hosted pedantic paths use
-`<root>/<host>/<repository-path...>/<repository>--<identity-digest>/`; local paths
+`<root>/<host>/<parent-path...>/<repository>--<identity-digest>/`; local paths
 use `<root>/local/<identity-digest>/<repository>/`.
 
 For a custom single-directory path, use `--name`:
@@ -104,7 +116,16 @@ place, including across HTTPS/SSH or SSH-user changes, so the changed default
 does not create a second archive. Multiple matching legacy archives are
 ambiguous and produce an error; pass the intended path directly to `update`.
 Legacy directories are not renamed automatically. If the easy destination
-already exists, it is authoritative and collision validation runs there.
+already exists, it is authoritative and collision validation runs there. To
+deliberately create or update the easy path without searching legacy archives,
+use:
+
+```bash
+repo-archive backup https://github.com/OWNER/REPO.git --root ./archives --no-legacy-reuse
+```
+
+`--no-legacy-reuse`, `--name`, and `--naming` are mutually exclusive path
+choices.
 
 `info`, `verify`, `update`, `snapshot`, and `restore` continue to require an
 explicit archive path; repository-identity and short-name lookup are not

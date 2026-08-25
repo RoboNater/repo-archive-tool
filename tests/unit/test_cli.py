@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 import pytest
 
@@ -40,6 +40,7 @@ def test_parser_accepts_backup_arguments() -> None:
     assert arguments.root.name == "archives"
     assert arguments.name == "daily"
     assert arguments.naming == "easy"
+    assert arguments.no_legacy_reuse is False
     assert arguments.no_lfs is True
     assert arguments.bundle is True
     assert arguments.metadata == "github"
@@ -59,6 +60,17 @@ def test_parser_accepts_pedantic_naming_and_rejects_a_name_override() -> None:
     )
 
     assert arguments.naming == "pedantic"
+    no_reuse = build_parser().parse_args(
+        [
+            "backup",
+            "https://example.test/team/repo.git",
+            "--root",
+            "archives",
+            "--no-legacy-reuse",
+        ]
+    )
+    assert no_reuse.naming == "easy"
+    assert no_reuse.no_legacy_reuse is True
     with pytest.raises(SystemExit):
         build_parser().parse_args(
             [
@@ -70,6 +82,18 @@ def test_parser_accepts_pedantic_naming_and_rejects_a_name_override() -> None:
                 "daily",
                 "--naming",
                 "pedantic",
+            ]
+        )
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(
+            [
+                "backup",
+                "https://example.test/team/repo.git",
+                "--root",
+                "archives",
+                "--name",
+                "daily",
+                "--no-legacy-reuse",
             ]
         )
 
@@ -147,6 +171,40 @@ def test_human_backup_output_leads_with_the_resolved_easy_path(
         lfs_enabled=True,
     )
     assert capsys.readouterr().out.startswith(f"ARCHIVE: {archive_path}\n")
+
+
+def test_cli_forwards_the_legacy_reuse_escape(tmp_path: Path, capsys: object) -> None:
+    archive_path = tmp_path / "archives" / "example.test" / "team" / "repo"
+    result = OperationResult("backup", archive_path)
+    with (
+        patch(
+            "sys.argv",
+            [
+                "repo-archive",
+                "backup",
+                "https://example.test/team/repo.git",
+                "--root",
+                str(tmp_path / "archives"),
+                "--no-legacy-reuse",
+                "--json",
+            ],
+        ),
+        patch(
+            "repo_archive.cli.resolve_backup_layout",
+            return_value=ArchiveLayout(archive_path),
+        ) as resolve,
+        patch("repo_archive.cli.backup_archive", return_value=result),
+    ):
+        assert main() == 0
+
+    resolve.assert_called_once_with(
+        tmp_path / "archives",
+        ANY,
+        name=None,
+        naming="easy",
+        reuse_legacy=False,
+    )
+    assert json.loads(capsys.readouterr().out)["archive_path"] == str(archive_path)
 
 
 def test_verify_json_emits_only_the_operation_result(capsys: object) -> None:
