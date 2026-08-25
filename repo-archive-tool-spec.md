@@ -173,6 +173,47 @@ The exact on-disk layout may evolve, but:
 - optional metadata must not be stored inside the Git object database;
 - manifests/reports must make archive completeness discoverable without opening the repository manually.
 
+### 6.1 Archive naming policy
+
+`backup` supports two deterministic naming policies:
+
+- `easy` is the default for both hosted and local remotes. Hosted repositories
+  use `<root>/<host>/<full/repository/path>`. Local repositories use
+  `<root>/local/<repository>`. These paths favor prediction and typing over
+  encoding the complete source identity.
+- `pedantic` appends a 12-character digest of the complete normalized remote
+  identity. Hosted repositories use
+  `<root>/<host>/<repository-path...>/<repository>--<identity-digest>`. Local
+  repositories use `<root>/local/<identity-digest>/<repository>`.
+
+In easy mode, hosted remotes with the same host, explicit port, and repository
+path are the same logical repository even when their transport or SSH user
+differs. Local remotes retain their complete resolved path identity. Different
+ports or paths remain different identities.
+
+Because filesystem-safe sanitization is lossy, two different sources can map
+to one easy path. Case-insensitive filesystems can introduce additional path
+collisions. An existing archive may be updated only when its recorded or
+configured source has the same logical identity. Otherwise backup must stop
+with a configuration error and suggest `--name` or pedantic naming; it must
+never overwrite or update the conflicting archive.
+
+`--name NAME` selects the single custom path `<root>/<safe-name>` and is
+mutually exclusive with `--naming`. It retains the same source-identity
+protection as derived paths.
+
+For compatibility with archives created before easy naming became the default,
+easy-mode resolution checks for matching digest-named archives when the easy
+destination does not exist. One matching legacy archive is reused in place,
+including when it was created through another transport or SSH user. Multiple
+matching legacy archives are ambiguous and must be selected explicitly with
+`update`; the tool does not rename or migrate archive directories
+automatically. If the easy destination already exists, it remains authoritative
+and normal collision validation applies.
+
+Commands other than `backup` continue to accept an explicit archive path; they
+do not search by repository identity or short name.
+
 ## 7. Manifest
 
 Each archive set must have a machine-readable manifest.
@@ -251,6 +292,7 @@ Useful options:
 ```text
 --root PATH
 --name NAME
+--naming easy|pedantic
 --no-lfs
 --bundle
 --metadata github
@@ -259,6 +301,10 @@ Useful options:
 ```
 
 `--no-lfs` must mean an intentional partial archive when LFS is present and must be reflected in status/reporting.
+
+Human-readable backup output must print the resolved archive path prominently.
+The stable JSON result continues to expose the same path through
+`archive_path`.
 
 ### 8.2 Update an existing archive
 
@@ -711,7 +757,6 @@ The following can be resolved during implementation without blocking the initial
 
 - final Python CLI framework (`argparse`, Click, or Typer);
 - license;
-- exact archive-root naming/URL normalization rules;
 - direct GitHub API implementation versus `gh` for metadata;
 - policy for whether detected-but-unarchived submodules produce `partial` or `complete-with-warnings`;
 - retention policy syntax for old snapshots;

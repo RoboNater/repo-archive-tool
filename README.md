@@ -49,10 +49,19 @@ Create an archive:
 repo-archive backup https://github.com/OWNER/REPO.git --root ./archives
 ```
 
-The default archive path is derived from the normalized remote and includes an
-identity digest. Use the `archive_path` field from `--json`, inspect the archive
-root, or pass `--name owner-repo` when you want a predictable single-directory
-name.
+The default easy naming policy creates a predictable hosted path such as
+`./archives/github.com/OWNER/REPO`; local remotes use
+`./archives/local/REPO`. Human-readable backup output begins with the resolved
+`ARCHIVE:` path, and JSON output retains it in `archive_path`.
+
+Use `--naming pedantic` when paths must encode the complete normalized remote
+identity with a digest, or `--name owner-repo` for a custom single-directory
+name. `--name` and `--naming` are mutually exclusive. Every policy refuses to
+reuse an occupied archive for a different source. Easy naming reuses one
+matching digest-named archive created by an older version instead of creating a
+duplicate; it never renames the legacy archive automatically. See the
+[usage guide](docs/usage.md#archive-naming-and-collisions) for collision and
+identity details.
 
 Then inspect, verify, and refresh the archive using that path:
 

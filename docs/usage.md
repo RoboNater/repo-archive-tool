@@ -41,29 +41,74 @@ Create an archive under a chosen root directory:
 repo-archive backup https://github.com/OWNER/REPO.git --root ./archives
 ```
 
-The command creates a native bare mirror in a deterministic archive-set path.
-For a hosted remote, the default path has this form:
+The command creates a native bare mirror in a deterministic archive-set path
+and begins normal human-readable output with the resolved path:
 
 ```text
-<root>/<host>/<owner-or-group>/<repository>--<identity-digest>/
+ARCHIVE: <resolved-archive-path>
 ```
 
-The digest prevents distinct remotes with otherwise similar names from
-silently sharing an archive. Local remotes use
-`<root>/local/<identity-digest>/<repository>/`. To choose an easier path, pass
-a single safe directory name:
+For scripts, `--json` continues to report the same path in the stable
+`archive_path` field:
+
+```bash
+repo-archive backup https://github.com/OWNER/REPO.git --root ./archives --json
+```
+
+### Archive naming and collisions
+
+The default `easy` policy makes paths predictable. Hosted remotes retain their
+complete repository path:
+
+```text
+<root>/<host>/<repository-path...>/<repository>/
+```
+
+Local remotes use `<root>/local/<repository>/`. The same default applies to
+hosted and local sources even though local repository names collide more often.
+An easy hosted identity consists of host, explicit port, and repository path;
+transport and SSH user are access details, so HTTPS and SSH forms of the same
+host/path update the same archive. A local identity is its complete resolved
+filesystem path.
+
+Filesystem-safe sanitization is lossy, and case-insensitive filesystems can
+make otherwise distinct names share a path. Before updating any occupied path,
+the tool compares source identity. A same-source backup updates normally; a
+different source produces exit code 2 without staging or changing the existing
+archive and suggests a custom name or pedantic naming.
+
+Pedantic naming preserves the previous digest-based behavior and incorporates
+the complete normalized remote identity, including transport and SSH user:
+
+```bash
+repo-archive backup https://github.com/OWNER/REPO.git --root ./archives --naming pedantic
+```
+
+Hosted pedantic paths use
+`<root>/<host>/<repository-path...>/<repository>--<identity-digest>/`; local paths
+use `<root>/local/<identity-digest>/<repository>/`.
+
+For a custom single-directory path, use `--name`:
 
 ```bash
 repo-archive backup https://github.com/OWNER/REPO.git --root ./archives --name owner-repo
 ```
 
 That archive is stored at `./archives/owner-repo`. An existing named archive
-cannot be reused for a different source. For scripts, `--json` reports the
-resolved path in the `archive_path` field:
+cannot be reused for a different source. `--name` and `--naming` are mutually
+exclusive because a custom name replaces the derived policy.
 
-```bash
-repo-archive backup https://github.com/OWNER/REPO.git --root ./archives --json
-```
+When easy mode's destination does not exist, backup looks for digest-named
+archives created by older releases. One matching logical source is reused in
+place, including across HTTPS/SSH or SSH-user changes, so the changed default
+does not create a second archive. Multiple matching legacy archives are
+ambiguous and produce an error; pass the intended path directly to `update`.
+Legacy directories are not renamed automatically. If the easy destination
+already exists, it is authoritative and collision validation runs there.
+
+`info`, `verify`, `update`, `snapshot`, and `restore` continue to require an
+explicit archive path; repository-identity and short-name lookup are not
+implemented.
 
 Backup stages and validates a new mirror before publishing it. Repeating the
 same command safely refreshes the existing archive and prunes refs deleted from

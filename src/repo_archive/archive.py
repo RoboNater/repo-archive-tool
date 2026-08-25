@@ -13,7 +13,15 @@ from repo_archive.filesystem import remove_readonly
 from repo_archive.git import CommandResult, GitRunner
 from repo_archive.lfs import archive_lfs
 from repo_archive.manifest import Manifest, load_manifest, write_json_atomic
-from repo_archive.remote import Remote, display_remote, normalize_remote
+from repo_archive.remote import (
+    ArchiveNaming,
+    Remote,
+    derive_archive_path,
+    display_remote,
+    legacy_archive_candidates,
+    normalize_remote,
+    same_repository_identity,
+)
 from repo_archive.reporting import write_latest_reports
 from repo_archive.results import (
     ComponentResult,
@@ -59,6 +67,46 @@ class ArchiveLayout:
             self.metadata_path,
         ):
             directory.mkdir(parents=True, exist_ok=True)
+
+
+def resolve_backup_layout(
+    root: Path,
+    remote: Remote,
+    *,
+    name: str | None = None,
+    naming: ArchiveNaming = "easy",
+) -> ArchiveLayout:
+    """Resolve a backup destination, reusing a matching digest-era archive."""
+    preferred = derive_archive_path(root, remote, name, naming=naming)
+    if name is not None or naming == "pedantic" or preferred.exists():
+        return ArchiveLayout(preferred)
+
+    candidates = legacy_archive_candidates(root, remote)
+    exact_legacy = derive_archive_path(root, remote, naming="pedantic")
+    matches: list[Path] = []
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        try:
+            source_url = str(load_manifest(candidate / "manifest.json").source["url"])
+            archived_remote = normalize_remote(source_url)
+        except (FileNotFoundError, KeyError, TypeError, ValueError):
+            if candidate == exact_legacy:
+                matches.append(candidate)
+            continue
+        if same_repository_identity(archived_remote, remote):
+            matches.append(candidate)
+
+    if len(matches) == 1:
+        return ArchiveLayout(matches[0])
+    if len(matches) > 1:
+        paths = ", ".join(str(path) for path in matches)
+        raise ValueError(
+            "Multiple legacy archives match this repository: "
+            f"{paths}. Pass one path to update, or choose --name or "
+            "--naming pedantic for a new backup."
+        )
+    return ArchiveLayout(preferred)
 
 
 def backup_archive(
@@ -338,13 +386,13 @@ def _validate_source_identity(
         existing_remote = normalize_remote(source_url)
     except ValueError as error:
         return _configuration_failure(operation, layout, str(error))
-    if existing_remote.canonical_url == requested_remote.canonical_url:
+    if same_repository_identity(existing_remote, requested_remote):
         return None
     return _configuration_failure(
         operation,
         layout,
-        "Archive source does not match the requested remote. "
-        "Use a new archive name or an explicit migration operation.",
+        "Archive path belongs to a different source than the requested remote. "
+        "Choose --name NAME or --naming pedantic for a separate backup.",
     )
 
 

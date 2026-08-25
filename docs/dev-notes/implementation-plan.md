@@ -1,7 +1,7 @@
 # repo-archive-tool Implementation Plan
 
 **Status:** In progress
-**Last reviewed:** 2026-08-22
+**Last reviewed:** 2026-08-24
 **Governing specification:** [`repo-archive-tool-spec.md`](../../repo-archive-tool-spec.md)
 
 This is the working implementation plan for `repo-archive-tool`. Keep it aligned with the repository as design decisions are made and phases are completed. The specification defines product requirements; this document records the intended implementation sequence and current project state.
@@ -16,6 +16,7 @@ This is the working implementation plan for `repo-archive-tool`. Keep it aligned
 - [x] Submodule awareness and incompleteness reporting implemented.
 - [x] Current-capability usage and project documentation completed.
 - [x] Bundle snapshots and offline restore implemented.
+- [x] Human-friendly archive naming and legacy digest-path discovery implemented.
 
 ## Implementation Decisions
 
@@ -27,9 +28,13 @@ This is the working implementation plan for `repo-archive-tool`. Keep it aligned
 - Use `pytest` for tests and `ruff` for linting and formatting, both installed and invoked through uv.
 - Keep generic Git archival independent from provider-specific metadata exporters.
 - Favor correctness and recoverability over update speed. Existing valid archives must survive failed refresh attempts.
-- Preserve remote URL authority (including IPv6 and non-default ports) separately
-  from filesystem-safe archive-path components. Archive paths include a stable
-  identity digest unless an explicit `--name` override is supplied.
+- Preserve remote URL authority (including IPv6 and non-default ports)
+  separately from filesystem-safe archive-path components. Use readable
+  host/path-derived archive paths by default, with an explicit pedantic mode
+  for complete normalized-identity digests and a custom `--name` override.
+  Treat transport and SSH user as access details for easy hosted identity, but
+  retain host, explicit port, path, and complete local-path identity for
+  collision checks.
 - Detect LFS attributes and submodule definitions across all archived,
   tree-bearing refs without requiring a worktree. Keep LFS storage inside
   `mirror.git/lfs`, and carry the previous store into staged updates before
@@ -135,6 +140,9 @@ the later phases.
 - [x] Redact credentials and tokens from remote URLs, diagnostics, manifests, reports, and exceptions.
 - [x] Normalize HTTPS, SSH/SCP, `file://`, and local-path remotes.
 - [x] Derive stable archive locations while preventing traversal, unsafe names, and accidental collisions; support `--name` overrides.
+- [x] Provide default easy naming, opt-in pedantic digest naming, and in-place
+  discovery of compatible legacy digest paths without weakening source
+  collision checks.
 - [x] Manage the archive-set layout: `mirror.git`, `manifest.json`, `reports`, `snapshots`, and `metadata`.
 - [x] Define schema-versioned manifest models and atomic JSON/text writers.
 - [x] Define structured component and operation results.
@@ -166,7 +174,8 @@ uses this contract while archive subcommands are implemented in Phase 2.
 - [x] Enumerate refs, branches, tags, symbolic `HEAD`, and the configured source remote.
 - [x] Populate manifest source, archive, and Git fields.
 - [x] Implement `update <archive-path>` using the same safe update path.
-- [x] Add `--root`, `--name`, `--no-lfs`, `--bundle`, `--metadata`, `--json`, and `--verbose` plumbing as applicable.
+- [x] Add `--root`, `--name`, `--naming`, `--no-lfs`, `--bundle`,
+  `--metadata`, `--json`, and `--verbose` plumbing as applicable.
 - [x] Classify authentication, invalid-repository, and integrity failures when the underlying tools provide reliable evidence; other transport errors remain general failures pending stable Git diagnostics.
 
 **Exit criterion:** A repository with multiple branches and tags can be archived and updated idempotently, deleted remote refs are pruned, and a failed update does not replace the last valid mirror.
@@ -188,6 +197,22 @@ lightweight and annotated tags, idempotent update, pruning, failed-update
 preservation, source-identity protection, and Windows `file://` source
 round-tripping. Source-identity failures retain the initiating `backup` or
 `update` operation name in the stable machine-readable result.
+
+**Archive naming usability follow-up 2026-08-24:** Issue
+[#13](https://github.com/RoboNater/repo-archive-tool/issues/13) changed the
+default to predictable hosted `<root>/<host>/<full/repository/path>` and local
+`<root>/local/<repository>` paths. `--naming pedantic` retains the former
+complete-identity digest layout, while `--name` is a mutually exclusive custom
+single-directory override. Easy hosted identity ignores transport and SSH user
+but retains host, explicit port, and repository path; local identity retains
+the complete resolved source path. Existing easy-path collisions remain fatal
+and suggest the two disambiguation options. When no easy destination exists,
+one matching legacy digest archive is reused in place; ambiguity among multiple
+logical matches fails rather than guessing. Human backup output now leads with
+the resolved path, while the JSON result shape is unchanged. Unit and local
+integration coverage exercises same-source reuse, sanitization collisions,
+transport/user identity, local collisions, custom names, pedantic paths, and
+legacy discovery.
 
 ## Phase 3: Manifests, Reports, Info, and Verification
 

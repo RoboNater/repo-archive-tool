@@ -39,10 +39,39 @@ def test_parser_accepts_backup_arguments() -> None:
     assert arguments.command == "backup"
     assert arguments.root.name == "archives"
     assert arguments.name == "daily"
+    assert arguments.naming == "easy"
     assert arguments.no_lfs is True
     assert arguments.bundle is True
     assert arguments.metadata == "github"
     assert arguments.command_json is True
+
+
+def test_parser_accepts_pedantic_naming_and_rejects_a_name_override() -> None:
+    arguments = build_parser().parse_args(
+        [
+            "backup",
+            "https://example.test/team/repo.git",
+            "--root",
+            "archives",
+            "--naming",
+            "pedantic",
+        ]
+    )
+
+    assert arguments.naming == "pedantic"
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(
+            [
+                "backup",
+                "https://example.test/team/repo.git",
+                "--root",
+                "archives",
+                "--name",
+                "daily",
+                "--naming",
+                "pedantic",
+            ]
+        )
 
 
 def test_parser_accepts_info_and_verification_modes() -> None:
@@ -86,6 +115,38 @@ def test_json_flag_emits_only_stable_json(capsys: object) -> None:
     captured = capsys.readouterr()  # type: ignore[attr-defined]
     assert json.loads(captured.out)["operation"] == "help"
     assert captured.err == ""
+
+
+def test_human_backup_output_leads_with_the_resolved_easy_path(
+    tmp_path: Path, capsys: object
+) -> None:
+    archive_path = tmp_path.resolve() / "archives" / "example.test" / "team" / "repo"
+    result = OperationResult(
+        "backup",
+        archive_path,
+        components=(ComponentResult("git mirror", ComponentStatus.COMPLETE),),
+    )
+    with (
+        patch(
+            "sys.argv",
+            [
+                "repo-archive",
+                "backup",
+                "https://example.test/team/repo.git",
+                "--root",
+                str(tmp_path / "archives"),
+            ],
+        ),
+        patch("repo_archive.cli.backup_archive", return_value=result) as backup,
+    ):
+        assert main() == 0
+
+    backup.assert_called_once_with(
+        "https://example.test/team/repo.git",
+        ArchiveLayout(archive_path),
+        lfs_enabled=True,
+    )
+    assert capsys.readouterr().out.startswith(f"ARCHIVE: {archive_path}\n")
 
 
 def test_verify_json_emits_only_the_operation_result(capsys: object) -> None:

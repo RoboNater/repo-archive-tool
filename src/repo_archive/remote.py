@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
+from typing import Literal
 from urllib.parse import unquote, urlsplit
 
 from repo_archive.security import redact_url
@@ -14,6 +16,8 @@ from repo_archive.security import redact_url
 _SCP_REMOTE = re.compile(r"^(?:(?P<user>[^@/:]+)@)?(?P<host>[^:/]+):(?P<path>.+)$")
 _SAFE_COMPONENT = re.compile(r"[^A-Za-z0-9._-]+")
 _WINDOWS_PATH = re.compile(r"^[A-Za-z]:[\\/]")
+
+ArchiveNaming = Literal["easy", "pedantic"]
 
 
 @dataclass(frozen=True)
@@ -90,24 +94,68 @@ def normalize_remote(value: str) -> Remote:
     return Remote(value, local_path.as_uri(), "local", None, None, (repository,), True)
 
 
-def derive_archive_path(root: Path, remote: Remote, name: str | None = None) -> Path:
+def derive_archive_path(
+    root: Path,
+    remote: Remote,
+    name: str | None = None,
+    *,
+    naming: ArchiveNaming = "easy",
+) -> Path:
     """Derive a deterministic archive-set path contained by *root*."""
     root = root.resolve()
     if name is not None:
         components = (_safe_component(name),)
-    elif remote.is_local:
-        digest = sha256(remote.canonical_url.encode()).hexdigest()[:12]
-        components = ("local", digest, _safe_component(remote.repository))
+    elif naming == "easy":
+        components = _easy_components(remote)
+    elif naming == "pedantic":
+        components = _pedantic_components(remote)
     else:
-        components = (
-            _safe_component(remote.host),
-            *map(_safe_component, remote.path[:-1]),
-            f"{_safe_component(remote.repository)}--{_identity_suffix(remote)}",
-        )
+        raise ValueError(f"Unsupported archive naming mode: {naming}")
     candidate = root.joinpath(*components)
     if root != candidate and root not in candidate.parents:
         raise ValueError("Archive path escapes the archive root.")
     return candidate
+
+
+def legacy_archive_candidates(root: Path, remote: Remote) -> tuple[Path, ...]:
+    """Return existing digest-era paths that may belong to *remote*.
+
+    The exact canonical-identity path is first. Additional candidates allow an
+    easy-mode backup to find an archive originally created through another
+    transport or SSH user.
+    """
+    exact = derive_archive_path(root, remote, naming="pedantic")
+    if remote.is_local:
+        parent = root.resolve() / "local"
+        pattern = f"*/{_safe_component(remote.repository)}"
+    else:
+        easy = derive_archive_path(root, remote)
+        parent = easy.parent
+        pattern = f"{_safe_component(remote.repository)}--????????????"
+    discovered = sorted(parent.glob(pattern)) if parent.is_dir() else []
+    return tuple(dict.fromkeys((exact, *discovered)))
+
+
+def same_repository_identity(first: Remote, second: Remote) -> bool:
+    """Return whether two remotes name the same logical repository.
+
+    Hosted identities intentionally ignore transport and SSH user. Host, port,
+    and repository path remain significant. Local repositories retain their
+    complete resolved file-URL identity.
+    """
+    if first.is_local or second.is_local:
+        return first.is_local == second.is_local and (
+            _local_identity(first) == _local_identity(second)
+        )
+    return (
+        first.host,
+        first.port,
+        first.path,
+    ) == (
+        second.host,
+        second.port,
+        second.path,
+    )
 
 
 def display_remote(remote: Remote) -> str:
@@ -140,6 +188,11 @@ def _file_url_path(value: str) -> str:
     return path
 
 
+def _local_identity(remote: Remote) -> str:
+    path = _file_url_path(urlsplit(remote.canonical_url).path)
+    return os.path.normcase(path)
+
+
 def _safe_component(value: str) -> str:
     if value in {"", ".", ".."} or "/" in value or "\\" in value:
         raise ValueError("Archive name must be a single non-empty path component.")
@@ -160,3 +213,26 @@ def _user_prefix(user: str | None) -> str:
 
 def _identity_suffix(remote: Remote) -> str:
     return sha256(remote.canonical_url.encode()).hexdigest()[:12]
+
+
+def _easy_components(remote: Remote) -> tuple[str, ...]:
+    if remote.is_local:
+        return ("local", _safe_component(remote.repository))
+    return (
+        _safe_component(remote.host),
+        *map(_safe_component, remote.path),
+    )
+
+
+def _pedantic_components(remote: Remote) -> tuple[str, ...]:
+    if remote.is_local:
+        return (
+            "local",
+            _identity_suffix(remote),
+            _safe_component(remote.repository),
+        )
+    return (
+        _safe_component(remote.host),
+        *map(_safe_component, remote.path[:-1]),
+        f"{_safe_component(remote.repository)}--{_identity_suffix(remote)}",
+    )
