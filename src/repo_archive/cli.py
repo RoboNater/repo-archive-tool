@@ -141,12 +141,6 @@ def main() -> int:
     arguments = parser.parse_args()
     if arguments.command == "verify" and arguments.quick and arguments.deep:
         parser.error("--quick cannot be combined with --deep")
-    if (
-        arguments.command == "backup"
-        and arguments.name is not None
-        and arguments.no_legacy_reuse
-    ):
-        parser.error("--name cannot be combined with --no-legacy-reuse")
     as_json = arguments.json or getattr(arguments, "command_json", False)
     if arguments.command == "backup":
         try:

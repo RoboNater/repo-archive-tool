@@ -236,9 +236,20 @@ backup resolution. Ancestor errors now recommend a custom name only when it
 can escape an archive below the selected root and require a different root
 when the root itself is an archive; pedantic naming is not suggested where its
 shared parent hierarchy cannot help. `--naming pedantic` may be combined with
-the redundant `--no-legacy-reuse` automation policy, while custom `--name`
-remains incompatible with legacy discovery controls. Regression tests cover
-both scratch prefixes, both ancestor remedies, and the adjusted CLI contract.
+the redundant `--no-legacy-reuse` automation policy. The initial follow-up
+still rejected that policy with a custom name; the final polish below aligns
+the combinations. Regression tests cover both scratch prefixes, both ancestor
+remedies, and the adjusted CLI contract.
+
+**Archive naming final review polish 2026-08-25:** The blanket
+`--no-legacy-reuse` automation policy is now accepted with custom names as well
+as pedantic naming; it remains operational only in easy mode. Descendant
+collision guidance distinguishes a new parent candidate, where custom or
+pedantic naming creates a disjoint path, from an existing parent archive that
+already contains a child, where the layout must be repaired by moving the
+child. Explicit `update` remains available to refresh that parent without path
+resolution but does not repair the nesting. Tests cover the consistent option
+combinations and actionable existing-parent message.
 
 ## Phase 3: Manifests, Reports, Info, and Verification
 

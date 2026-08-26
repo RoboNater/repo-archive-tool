@@ -142,8 +142,13 @@ def test_existing_parent_archive_refuses_an_already_nested_child(
         derive_archive_path(tmp_path, normalize_remote(child_source)), child_source
     )
 
-    with pytest.raises(ValueError, match="would contain"):
+    with pytest.raises(ValueError, match="Move the nested archive") as error:
         resolve_backup_layout(tmp_path, normalize_remote(parent_source))
+
+    assert "without repairing the layout" in str(error.value)
+    assert "run update directly" in str(error.value)
+    assert "--name" not in str(error.value)
+    assert "--naming pedantic" not in str(error.value)
 
 
 @pytest.mark.parametrize(

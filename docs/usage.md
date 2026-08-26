@@ -93,7 +93,11 @@ escape an existing ancestor because it retains the same parent hierarchy. If
 the requested path would contain an existing child archive, either `--name` or
 pedantic naming can keep the archive sets disjoint. Crash-leftover
 `.mirror-staging-*` and `.mirror-previous-*` directories created by the tool
-are ignored during this boundary scan and do not block a later refresh.
+are ignored during this boundary scan and do not block a later refresh. If an
+archive already contains a nested child, move the child outside the parent to
+repair the layout. An explicit `update <archive-path>` bypasses path resolution
+and can refresh the parent in the meantime, but leaves the unsafe nesting in
+place.
 
 Pedantic naming preserves the previous digest-based behavior and incorporates
 the complete normalized remote identity, including transport and SSH user:
@@ -130,10 +134,9 @@ use:
 repo-archive backup https://github.com/OWNER/REPO.git --root ./archives --no-legacy-reuse
 ```
 
-`--no-legacy-reuse` cannot be combined with `--name`. It may be combined with
-`--naming pedantic` as a redundant no-op so automation can consistently state
-that legacy archives must not be reused; the flag only changes easy-mode
-resolution.
+`--no-legacy-reuse` may be combined with `--name` or `--naming pedantic` as a
+redundant no-op so automation can consistently state that legacy archives must
+not be reused; the flag only changes easy-mode resolution.
 
 `info`, `verify`, `update`, `snapshot`, and `restore` continue to require an
 explicit archive path; repository-identity and short-name lookup are not

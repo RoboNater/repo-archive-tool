@@ -84,6 +84,19 @@ def test_parser_accepts_pedantic_naming_and_compatible_legacy_option() -> None:
     )
     assert pedantic_no_reuse.naming == "pedantic"
     assert pedantic_no_reuse.no_legacy_reuse is True
+    named_no_reuse = build_parser().parse_args(
+        [
+            "backup",
+            "https://example.test/team/repo.git",
+            "--root",
+            "archives",
+            "--name",
+            "daily",
+            "--no-legacy-reuse",
+        ]
+    )
+    assert named_no_reuse.name == "daily"
+    assert named_no_reuse.no_legacy_reuse is True
     with pytest.raises(SystemExit):
         build_parser().parse_args(
             [
@@ -97,26 +110,6 @@ def test_parser_accepts_pedantic_naming_and_compatible_legacy_option() -> None:
                 "pedantic",
             ]
         )
-
-
-def test_cli_rejects_name_with_no_legacy_reuse() -> None:
-    with (
-        patch(
-            "sys.argv",
-            [
-                "repo-archive",
-                "backup",
-                "https://example.test/team/repo.git",
-                "--root",
-                "archives",
-                "--name",
-                "daily",
-                "--no-legacy-reuse",
-            ],
-        ),
-        pytest.raises(SystemExit),
-    ):
-        main()
 
 
 def test_parser_accepts_info_and_verification_modes() -> None:

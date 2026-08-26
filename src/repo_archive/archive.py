@@ -135,13 +135,21 @@ def _validate_archive_boundary(root: Path, selected: Path) -> None:
 
     if not selected.exists():
         return
+    selected_is_archive = _looks_like_archive(selected)
     nested = _find_descendant_archive(
-        selected, skip_archive_internals=_looks_like_archive(selected)
+        selected, skip_archive_internals=selected_is_archive
     )
     if nested is not None:
+        if selected_is_archive:
+            remedy = (
+                "Move the nested archive outside this archive set. To refresh the "
+                "parent without repairing the layout, run update directly on this "
+                "archive path."
+            )
+        else:
+            remedy = "Choose --name or --naming pedantic."
         raise ValueError(
-            f"Archive path would contain the existing archive at {nested}. "
-            "Choose --name or --naming pedantic."
+            f"Archive path would contain the existing archive at {nested}. {remedy}"
         )
 
 

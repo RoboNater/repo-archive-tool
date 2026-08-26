@@ -209,7 +209,10 @@ a different root. Tool-owned `.mirror-staging-*` and `.mirror-previous-*`
 scratch directories are excluded from descendant detection so crash leftovers
 do not prevent the archive from being refreshed. A candidate that would
 contain a genuine child archive can use a custom name or pedantic naming to
-keep the archive sets disjoint.
+keep the archive sets disjoint. If an existing archive already contains a
+child archive, resolution must instead direct the user to move the child out;
+an explicit `update <archive-path>` may still refresh the parent without
+performing backup path resolution, but does not repair the nested layout.
 
 `--name NAME` selects the single custom path `<root>/<safe-name>` and is
 mutually exclusive with `--naming`. It retains the same source-identity
@@ -223,9 +226,9 @@ matching legacy archives are ambiguous and must be selected explicitly with
 `update`; the tool does not rename or migrate archive directories
 automatically. If the easy destination already exists, it remains authoritative
 and normal collision validation applies. `--no-legacy-reuse` selects the easy
-destination without legacy discovery and is mutually exclusive with `--name`.
-It may be combined redundantly with pedantic naming so automation can express
-a general never-reuse-legacy policy, but it has no effect outside easy mode.
+destination without legacy discovery. It may be combined redundantly with a
+custom name or pedantic naming so automation can express a general
+never-reuse-legacy policy, but it has no effect outside easy mode.
 
 Commands other than `backup` continue to accept an explicit archive path; they
 do not search by repository identity or short name.
