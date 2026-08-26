@@ -11,6 +11,7 @@ import pytest
 from repo_archive.reporting import (
     add_report_write_warning,
     emit_result,
+    render_text,
     write_latest_reports,
 )
 from repo_archive.results import (
@@ -103,6 +104,12 @@ def test_latest_reports_are_written_atomically(tmp_path: Path) -> None:
     assert "RESULT: complete" in (tmp_path / "reports" / "latest.txt").read_text(
         encoding="utf-8"
     )
+
+
+def test_human_output_names_the_archive_for_every_archive_operation() -> None:
+    result = OperationResult("update", Path("archive"))
+
+    assert render_text(result).startswith("ARCHIVE: archive\n")
 
 
 def test_report_write_warning_is_not_duplicated() -> None:

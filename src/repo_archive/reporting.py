@@ -15,6 +15,8 @@ REPORT_WRITE_WARNING_PREFIX = "Latest operation reports could not be written:"
 def render_text(result: OperationResult) -> str:
     """Format a concise human-facing operation result."""
     lines = []
+    if result.archive_path is not None:
+        lines.append(f"ARCHIVE: {result.archive_path}")
     for component in result.components:
         label = (
             "OK"

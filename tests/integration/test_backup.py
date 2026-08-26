@@ -13,6 +13,7 @@ import pytest
 from repo_archive.archive import (
     ArchiveLayout,
     backup_archive,
+    resolve_backup_layout,
     update_archive,
 )
 from repo_archive.filesystem import remove_readonly
@@ -201,6 +202,25 @@ def test_backup_refuses_to_replace_a_named_archive_from_another_source(
     assert result.exit_code == 2
     assert git("rev-parse", "main", cwd=layout.mirror_path) == original_head
     assert load_manifest(layout.manifest_path).source["url"] == first_remote.as_uri()
+
+
+def test_easy_local_path_collision_refuses_a_different_source(tmp_path: Path) -> None:
+    first_remote, _ = create_remote(tmp_path / "first")
+    second_remote, _ = create_remote(tmp_path / "second")
+    root = tmp_path / "archives"
+    first_layout = resolve_backup_layout(root, normalize_remote(str(first_remote)))
+    second_layout = resolve_backup_layout(root, normalize_remote(str(second_remote)))
+    assert first_layout.path == root / "local" / "remote"
+    assert second_layout.path == first_layout.path
+    assert backup_archive(str(first_remote), first_layout).outcome is Outcome.COMPLETE
+    original_head = git("rev-parse", "main", cwd=first_layout.mirror_path)
+
+    result = backup_archive(str(second_remote), second_layout)
+
+    assert result.outcome is Outcome.FAILED
+    assert result.exit_code == 2
+    assert "--naming pedantic" in result.errors[0]
+    assert git("rev-parse", "main", cwd=first_layout.mirror_path) == original_head
 
 
 def test_update_identity_failure_preserves_its_operation_name(tmp_path: Path) -> None:

@@ -13,7 +13,15 @@ from repo_archive.filesystem import remove_readonly
 from repo_archive.git import CommandResult, GitRunner
 from repo_archive.lfs import archive_lfs
 from repo_archive.manifest import Manifest, load_manifest, write_json_atomic
-from repo_archive.remote import Remote, display_remote, normalize_remote
+from repo_archive.remote import (
+    ArchiveNaming,
+    Remote,
+    derive_archive_path,
+    display_remote,
+    legacy_archive_candidates,
+    normalize_remote,
+    same_repository_identity,
+)
 from repo_archive.reporting import write_latest_reports
 from repo_archive.results import (
     ComponentResult,
@@ -59,6 +67,133 @@ class ArchiveLayout:
             self.metadata_path,
         ):
             directory.mkdir(parents=True, exist_ok=True)
+
+
+def resolve_backup_layout(
+    root: Path,
+    remote: Remote,
+    *,
+    name: str | None = None,
+    naming: ArchiveNaming = "easy",
+    reuse_legacy: bool = True,
+) -> ArchiveLayout:
+    """Resolve a backup destination, reusing a matching digest-era archive."""
+    preferred = derive_archive_path(root, remote, name, naming=naming)
+    selected = preferred
+    if name is None and naming == "easy" and reuse_legacy and not preferred.exists():
+        candidates = legacy_archive_candidates(root, remote)
+        exact_legacy = derive_archive_path(root, remote, naming="pedantic")
+        matches: list[Path] = []
+        for candidate in candidates:
+            if not candidate.exists():
+                continue
+            try:
+                source_url = str(
+                    load_manifest(candidate / "manifest.json").source["url"]
+                )
+                archived_remote = normalize_remote(source_url)
+            except (FileNotFoundError, KeyError, TypeError, ValueError):
+                # The exact digest path may be a failed legacy attempt whose
+                # manifest was never published. Let normal identity validation
+                # inspect its mirror, or let backup finish that same destination.
+                if candidate == exact_legacy:
+                    matches.append(candidate)
+                continue
+            if same_repository_identity(archived_remote, remote):
+                matches.append(candidate)
+
+        if len(matches) == 1:
+            selected = matches[0]
+        elif len(matches) > 1:
+            paths = ", ".join(str(path) for path in matches)
+            raise ValueError(
+                "Multiple legacy archives match this repository: "
+                f"{paths}. Pass one path to update, or use --no-legacy-reuse, "
+                "--name, or --naming pedantic to choose a new backup path."
+            )
+
+    _validate_archive_boundary(root.resolve(), selected)
+    return ArchiveLayout(selected)
+
+
+def _validate_archive_boundary(root: Path, selected: Path) -> None:
+    """Refuse layouts that would place one archive set inside another."""
+    for ancestor in selected.parents:
+        if root != ancestor and root not in ancestor.parents:
+            break
+        if _looks_like_archive(ancestor):
+            if ancestor == root:
+                remedy = "Choose a different --root."
+            else:
+                remedy = "Choose --name to place it outside that archive."
+            raise ValueError(
+                f"Archive path would be nested inside the existing archive at "
+                f"{ancestor}. {remedy}"
+            )
+        if ancestor == root:
+            break
+
+    if not selected.exists():
+        return
+    selected_is_archive = _looks_like_archive(selected)
+    nested = _find_descendant_archive(
+        selected, skip_archive_internals=selected_is_archive
+    )
+    if nested is not None:
+        if selected_is_archive:
+            remedy = (
+                "Move the nested archive outside this archive set. To refresh the "
+                "parent without repairing the layout, run update directly on this "
+                "archive path."
+            )
+        else:
+            remedy = "Choose --name or --naming pedantic."
+        raise ValueError(
+            f"Archive path would contain the existing archive at {nested}. {remedy}"
+        )
+
+
+def _find_descendant_archive(
+    path: Path, *, skip_archive_internals: bool = False
+) -> Path | None:
+    pending = [path]
+    while pending:
+        current = pending.pop()
+        try:
+            children = tuple(current.iterdir())
+        except OSError as error:
+            raise ValueError(
+                f"Could not inspect archive path boundaries at {current}: {error}"
+            ) from error
+        for child in children:
+            if not child.is_dir() or child.is_symlink():
+                continue
+            if _is_archive_scratch_directory(child):
+                continue
+            if _looks_like_archive(child):
+                return child
+            if (
+                skip_archive_internals
+                and current == path
+                and child.name
+                in {
+                    "mirror.git",
+                    "reports",
+                    "snapshots",
+                    "metadata",
+                }
+            ):
+                continue
+            pending.append(child)
+    return None
+
+
+def _looks_like_archive(path: Path) -> bool:
+    return (path / "manifest.json").exists() or (path / "mirror.git").exists()
+
+
+def _is_archive_scratch_directory(path: Path) -> bool:
+    return path.name.startswith((".mirror-staging-", ".mirror-previous-"))
 
 
 def backup_archive(
@@ -338,13 +473,14 @@ def _validate_source_identity(
         existing_remote = normalize_remote(source_url)
     except ValueError as error:
         return _configuration_failure(operation, layout, str(error))
-    if existing_remote.canonical_url == requested_remote.canonical_url:
+    if same_repository_identity(existing_remote, requested_remote):
         return None
     return _configuration_failure(
         operation,
         layout,
-        "Archive source does not match the requested remote. "
-        "Use a new archive name or an explicit migration operation.",
+        "Archive path belongs to a different normalized source identity than the "
+        "requested remote. Choose --name NAME or --naming pedantic for a separate "
+        "backup.",
     )
 
 

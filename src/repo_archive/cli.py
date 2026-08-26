@@ -7,9 +7,14 @@ import sys
 from pathlib import Path
 
 from repo_archive import __version__
-from repo_archive.archive import ArchiveLayout, backup_archive, update_archive
+from repo_archive.archive import (
+    ArchiveLayout,
+    backup_archive,
+    resolve_backup_layout,
+    update_archive,
+)
 from repo_archive.inspection import info_archive, verify_archive
-from repo_archive.remote import derive_archive_path, normalize_remote
+from repo_archive.remote import normalize_remote
 from repo_archive.reporting import (
     add_report_write_warning,
     emit_result,
@@ -44,7 +49,19 @@ def build_parser() -> argparse.ArgumentParser:
     backup.add_argument(
         "--root", type=Path, required=True, help="archive root directory"
     )
-    backup.add_argument("--name", help="archive-set name override")
+    naming = backup.add_mutually_exclusive_group()
+    naming.add_argument("--name", help="custom archive-set name override")
+    naming.add_argument(
+        "--naming",
+        choices=("easy", "pedantic"),
+        default="easy",
+        help="archive path policy (default: easy)",
+    )
+    backup.add_argument(
+        "--no-legacy-reuse",
+        action="store_true",
+        help="skip digest-era archive discovery in easy naming mode",
+    )
     backup.add_argument(
         "--no-lfs",
         action="store_true",
@@ -128,8 +145,12 @@ def main() -> int:
     if arguments.command == "backup":
         try:
             remote = normalize_remote(arguments.remote_url)
-            layout = ArchiveLayout(
-                derive_archive_path(arguments.root, remote, arguments.name)
+            layout = resolve_backup_layout(
+                arguments.root,
+                remote,
+                name=arguments.name,
+                naming=arguments.naming,
+                reuse_legacy=not arguments.no_legacy_reuse,
             )
         except ValueError as error:
             result = _configuration_failure("backup", str(error))
