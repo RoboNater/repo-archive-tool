@@ -95,10 +95,26 @@ def test_easy_mode_refuses_to_nest_a_child_inside_an_existing_archive(
     parent = derive_archive_path(tmp_path, normalize_remote(parent_source))
     _write_manifest(parent, parent_source)
 
-    with pytest.raises(ValueError, match="nested inside"):
+    with pytest.raises(ValueError, match="Choose --name") as error:
         resolve_backup_layout(
             tmp_path, normalize_remote("https://gitlab.test/group/repo/sub.git")
         )
+
+    assert "--naming pedantic" not in str(error.value)
+
+
+def test_archive_root_requires_a_different_root_for_nested_backup(
+    tmp_path: Path,
+) -> None:
+    _write_manifest(tmp_path, "https://gitlab.test/group/repo.git")
+
+    with pytest.raises(ValueError, match="Choose a different --root") as error:
+        resolve_backup_layout(
+            tmp_path, normalize_remote("https://gitlab.test/group/other.git")
+        )
+
+    assert "--name" not in str(error.value)
+    assert "--naming pedantic" not in str(error.value)
 
 
 def test_easy_mode_refuses_to_make_a_parent_of_an_existing_child_archive(
@@ -128,3 +144,19 @@ def test_existing_parent_archive_refuses_an_already_nested_child(
 
     with pytest.raises(ValueError, match="would contain"):
         resolve_backup_layout(tmp_path, normalize_remote(parent_source))
+
+
+@pytest.mark.parametrize(
+    "scratch_name", [".mirror-staging-crash", ".mirror-previous-crash"]
+)
+def test_tool_scratch_directories_do_not_count_as_nested_archives(
+    tmp_path: Path, scratch_name: str
+) -> None:
+    source = "https://gitlab.test/group/repo.git"
+    archive = derive_archive_path(tmp_path, normalize_remote(source))
+    _write_manifest(archive, source)
+    (archive / "leftovers" / scratch_name / "mirror.git").mkdir(parents=True)
+
+    layout = resolve_backup_layout(tmp_path, normalize_remote(source))
+
+    assert layout.path == archive

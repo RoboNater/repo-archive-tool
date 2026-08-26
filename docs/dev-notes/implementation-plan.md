@@ -229,6 +229,17 @@ explicitly. Human output consistently leads with the archive path for every
 archive-targeting operation. Regression tests cover both nesting directions,
 the legacy bypass, parser exclusivity, and shared path rendering.
 
+**Archive naming re-review follow-up 2026-08-25:** Descendant boundary scans
+exclude the tool's `.mirror-staging-*` and `.mirror-previous-*` scratch
+directories at any depth, so a hard-kill leftover cannot permanently block
+backup resolution. Ancestor errors now recommend a custom name only when it
+can escape an archive below the selected root and require a different root
+when the root itself is an archive; pedantic naming is not suggested where its
+shared parent hierarchy cannot help. `--naming pedantic` may be combined with
+the redundant `--no-legacy-reuse` automation policy, while custom `--name`
+remains incompatible with legacy discovery controls. Regression tests cover
+both scratch prefixes, both ancestor remedies, and the adjusted CLI contract.
+
 ## Phase 3: Manifests, Reports, Info, and Verification
 
 - [x] Write schema-versioned `manifest.json` after successful archive state changes.

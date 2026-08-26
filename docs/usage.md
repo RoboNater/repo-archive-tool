@@ -86,8 +86,14 @@ archive and suggests a custom name or pedantic naming.
 Easy naming can otherwise make one repository path a prefix of another, such
 as `group/repo` and `group/repo/sub`. Before staging, the tool refuses any path
 that would put a new archive above or below an existing archive marked by
-`manifest.json` or `mirror.git`. Use `--name` or pedantic naming to keep the
-archive sets disjoint.
+`manifest.json` or `mirror.git`. If the requested path would be inside an
+archive below the root, use `--name` to place it elsewhere under the root. If
+`--root` is itself an archive, choose a different root. Pedantic naming cannot
+escape an existing ancestor because it retains the same parent hierarchy. If
+the requested path would contain an existing child archive, either `--name` or
+pedantic naming can keep the archive sets disjoint. Crash-leftover
+`.mirror-staging-*` and `.mirror-previous-*` directories created by the tool
+are ignored during this boundary scan and do not block a later refresh.
 
 Pedantic naming preserves the previous digest-based behavior and incorporates
 the complete normalized remote identity, including transport and SSH user:
@@ -124,8 +130,10 @@ use:
 repo-archive backup https://github.com/OWNER/REPO.git --root ./archives --no-legacy-reuse
 ```
 
-`--no-legacy-reuse`, `--name`, and `--naming` are mutually exclusive path
-choices.
+`--no-legacy-reuse` cannot be combined with `--name`. It may be combined with
+`--naming pedantic` as a redundant no-op so automation can consistently state
+that legacy archives must not be reused; the flag only changes easy-mode
+resolution.
 
 `info`, `verify`, `update`, `snapshot`, and `restore` continue to require an
 explicit archive path; repository-identity and short-name lookup are not

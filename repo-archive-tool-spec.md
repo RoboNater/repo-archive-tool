@@ -202,8 +202,14 @@ never overwrite or update the conflicting archive.
 
 No resolved archive path may be an ancestor or descendant of another archive
 set under the same root. Resolution must detect `manifest.json` or `mirror.git`
-markers above or below the candidate and stop before staging, suggesting a
-custom name or pedantic naming.
+markers above or below the candidate and stop before staging. When the
+candidate would be inside an archive below the root, a custom name can move it
+outside that archive; when the root is itself an archive, the user must choose
+a different root. Tool-owned `.mirror-staging-*` and `.mirror-previous-*`
+scratch directories are excluded from descendant detection so crash leftovers
+do not prevent the archive from being refreshed. A candidate that would
+contain a genuine child archive can use a custom name or pedantic naming to
+keep the archive sets disjoint.
 
 `--name NAME` selects the single custom path `<root>/<safe-name>` and is
 mutually exclusive with `--naming`. It retains the same source-identity
@@ -217,8 +223,9 @@ matching legacy archives are ambiguous and must be selected explicitly with
 `update`; the tool does not rename or migrate archive directories
 automatically. If the easy destination already exists, it remains authoritative
 and normal collision validation applies. `--no-legacy-reuse` selects the easy
-destination without legacy discovery and is mutually exclusive with `--name`
-and `--naming`.
+destination without legacy discovery and is mutually exclusive with `--name`.
+It may be combined redundantly with pedantic naming so automation can express
+a general never-reuse-legacy policy, but it has no effect outside easy mode.
 
 Commands other than `backup` continue to accept an explicit archive path; they
 do not search by repository identity or short name.

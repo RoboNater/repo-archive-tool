@@ -122,9 +122,13 @@ def _validate_archive_boundary(root: Path, selected: Path) -> None:
         if root != ancestor and root not in ancestor.parents:
             break
         if _looks_like_archive(ancestor):
+            if ancestor == root:
+                remedy = "Choose a different --root."
+            else:
+                remedy = "Choose --name to place it outside that archive."
             raise ValueError(
                 f"Archive path would be nested inside the existing archive at "
-                f"{ancestor}. Choose --name or --naming pedantic."
+                f"{ancestor}. {remedy}"
             )
         if ancestor == root:
             break
@@ -156,6 +160,8 @@ def _find_descendant_archive(
         for child in children:
             if not child.is_dir() or child.is_symlink():
                 continue
+            if _is_archive_scratch_directory(child):
+                continue
             if _looks_like_archive(child):
                 return child
             if (
@@ -176,6 +182,10 @@ def _find_descendant_archive(
 
 def _looks_like_archive(path: Path) -> bool:
     return (path / "manifest.json").exists() or (path / "mirror.git").exists()
+
+
+def _is_archive_scratch_directory(path: Path) -> bool:
+    return path.name.startswith((".mirror-staging-", ".mirror-previous-"))
 
 
 def backup_archive(
