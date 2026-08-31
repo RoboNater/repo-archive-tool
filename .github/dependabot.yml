@@ -1,0 +1,14 @@
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    # Keep routine action maintenance low-noise with one grouped monthly PR.
+    schedule:
+      interval: monthly
+      time: "06:00"
+      timezone: America/New_York
+    groups:
+      github-actions:
+        patterns:
+          - "*"
