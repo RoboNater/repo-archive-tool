@@ -1,7 +1,7 @@
 # repo-archive-tool Implementation Plan
 
 **Status:** In progress
-**Last reviewed:** 2026-08-25
+**Last reviewed:** 2026-08-30
 **Governing specification:** [`repo-archive-tool-spec.md`](../../repo-archive-tool-spec.md)
 
 This is the working implementation plan for `repo-archive-tool`. Keep it aligned with the repository as design decisions are made and phases are completed. The specification defines product requirements; this document records the intended implementation sequence and current project state.
@@ -17,6 +17,7 @@ This is the working implementation plan for `repo-archive-tool`. Keep it aligned
 - [x] Current-capability usage and project documentation completed.
 - [x] Bundle snapshots and offline restore implemented.
 - [x] Human-friendly archive naming and legacy digest-path discovery implemented.
+- [x] GitHub Actions dependencies pinned and Dependabot maintenance configured.
 
 ## Implementation Decisions
 
@@ -26,6 +27,9 @@ This is the working implementation plan for `repo-archive-tool`. Keep it aligned
 - Use the standard-library `argparse` module for the CLI so the installed tool has minimal runtime dependencies.
 - Invoke the system `git` and conditional `git-lfs` executables through `subprocess`; do not substitute a Python Git implementation.
 - Use `pytest` for tests and `ruff` for linting and formatting, both installed and invoked through uv.
+- Pin external GitHub Actions dependencies to full commit SHAs with exact
+  release-tag comments. Use grouped monthly Dependabot updates to keep those
+  immutable revisions maintained without excessive pull-request noise.
 - Keep generic Git archival independent from provider-specific metadata exporters.
 - Favor correctness and recoverability over update speed. Existing valid archives must survive failed refresh attempts.
 - Preserve remote URL authority (including IPv6 and non-default ports)
@@ -119,6 +123,8 @@ The exact module boundaries may be adjusted as code emerges, but Git operations,
 - [x] Create the `src/repo_archive` package and test directories.
 - [x] Configure Ruff linting/formatting and pytest defaults in `pyproject.toml`.
 - [x] Add CI for supported Python versions on Linux, Windows, and macOS using `uv sync --locked` followed by the same checks used locally.
+- [x] Pin workflow actions to immutable revisions, document the release-tag
+  comment convention, and configure grouped monthly Dependabot maintenance.
 - [x] Establish the standard local workflow:
 
   ```bash
@@ -134,6 +140,12 @@ The exact module boundaries may be adjusted as code emerges, but Git operations,
 **Completed 2026-08-15:** Bootstrap currently targets Python 3.11–3.13 in CI.
 The only CLI behavior is `--help` and `--version`; archive subcommands begin in
 the later phases.
+
+**CI supply-chain hardening 2026-08-30:** Issue #2 pinned every external action
+to its full commit SHA while retaining exact release tags in comments.
+Dependabot now checks the `github-actions` ecosystem monthly and groups routine
+updates into one pull request. A repository-level unit test enforces the
+pin-and-comment convention for future workflow changes.
 
 ## Phase 1: Shared Archive Infrastructure
 
