@@ -217,6 +217,13 @@ Apply formatting with `uv run ruff format .`. Default tests use local temporary
 Git repositories and do not require network access. Git LFS integration tests
 run when Git LFS is installed and otherwise skip explicitly.
 
+GitHub Actions dependencies in `.github/workflows` must be pinned to a full
+40-character commit SHA. Keep the corresponding exact release tag in an
+inline comment (for example, `owner/action@<commit-sha> # v1.2.3`) so reviews
+remain readable while execution stays immutable. Dependabot checks these pins
+monthly and groups routine GitHub Actions updates into a single pull request
+to keep maintenance noise low.
+
 ## Project references
 
 - [Detailed usage guide](docs/usage.md)
