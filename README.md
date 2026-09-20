@@ -176,7 +176,10 @@ well as the aggregate exit code.
   `partial` by a skipped, failed, or untooled fetch verifies `complete` once it
   holds the full set, and full verification refreshes the recorded LFS state.
   A failed or impossible transfer is still measured against the local store, so
-  the exact gap and the underlying tool diagnostic are both reported.
+  the exact gap and the underlying tool diagnostic are both reported. Neither
+  the requirement set nor the integrity check uses `git-lfs`; full verification
+  probes `git lfs version` only to state in its result and report whether
+  tooling is present to close a gap.
 
   Two consequences are worth knowing. A valid pointer blob counts as required
   even when its path is not matched by a `filter=lfs` rule at that commit. A

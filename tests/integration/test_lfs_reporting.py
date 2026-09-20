@@ -32,6 +32,13 @@ from repo_archive.snapshots import create_snapshot
 _PAYLOAD = b"review payload\n"
 
 
+class AvailableLfsToolingRunner(GitRunner):
+    """Use real Git while simulating a machine that has `git-lfs` installed."""
+
+    def lfs(self, *arguments: str, **kwargs: object) -> CommandResult:
+        return CommandResult(("git", "lfs", *arguments), 0, "git-lfs/3.0.0", "")
+
+
 class FetchFailureRunner(GitRunner):
     """Real Git with available Git LFS tooling whose archival fetch fails."""
 
@@ -255,3 +262,66 @@ def test_update_reports_the_gap_after_a_failed_fetch(tmp_path: Path) -> None:
     persisted = load_manifest(layout.manifest_path).lfs
     assert persisted["reason"] == "fetch-failed"
     assert persisted["missing_objects"] == [oid]
+
+
+def test_verify_states_tooling_is_unavailable(tmp_path: Path) -> None:
+    """r1-2 residual: availability must reach the emitted and persisted output."""
+    layout, oid = archive_without_payload(tmp_path)
+
+    result = verify_archive(layout, runner=NoLfsToolingRunner())
+
+    message = str(lfs_component(result)["message"])
+    assert "Git LFS tooling is unavailable on this machine." in message
+    assert oid in message
+    report = json.loads((layout.reports_path / "latest.json").read_text("utf-8"))
+    reported = next(item for item in report["components"] if item["name"] == "lfs")
+    assert "unavailable on this machine" in reported["message"]
+    assert load_manifest(layout.manifest_path).lfs["tooling_available"] is False
+
+
+def test_verify_states_tooling_is_available(tmp_path: Path) -> None:
+    """The same archive reports differently when Git LFS is present."""
+    layout, oid = archive_without_payload(tmp_path)
+
+    result = verify_archive(layout, runner=AvailableLfsToolingRunner())
+
+    message = str(lfs_component(result)["message"])
+    assert "Git LFS tooling is available." in message
+    assert oid in message
+    report = json.loads((layout.reports_path / "latest.json").read_text("utf-8"))
+    reported = next(item for item in report["components"] if item["name"] == "lfs")
+    assert "Git LFS tooling is available." in reported["message"]
+    assert load_manifest(layout.manifest_path).lfs["tooling_available"] is True
+
+
+def test_reports_differ_by_tooling_availability(tmp_path: Path) -> None:
+    """The reviewer's repro: identical archives must not produce identical reports."""
+    absent_layout, _ = archive_without_payload(tmp_path / "absent")
+    present_layout, _ = archive_without_payload(tmp_path / "present")
+
+    absent = verify_archive(absent_layout, runner=NoLfsToolingRunner())
+    present = verify_archive(present_layout, runner=AvailableLfsToolingRunner())
+
+    assert lfs_component(absent)["message"] != lfs_component(present)["message"]
+    assert absent.outcome is present.outcome
+
+
+def test_no_availability_claim_when_nothing_is_required(tmp_path: Path) -> None:
+    """With no required objects there is nothing to fetch, so no claim is made."""
+    source = make_repository(
+        tmp_path / "source",
+        {
+            ".gitattributes": f"*.bin {LFS_ATTRIBUTES}\n",
+            "data.bin": "raw content, not a pointer\n",
+        },
+    )
+    layout = ArchiveLayout(tmp_path / "archive")
+    assert (
+        backup_archive(str(source), layout, runner=NoLfsToolingRunner()).exit_code == 0
+    )
+
+    result = verify_archive(layout, runner=NoLfsToolingRunner())
+
+    message = str(lfs_component(result)["message"])
+    assert "tooling" not in message
+    assert "tooling_available" not in load_manifest(layout.manifest_path).lfs

@@ -88,7 +88,9 @@ Verification recomputes the requirement set and hashes every required object, so
 
 This is what prevents the archive and snapshot layers from reporting different completeness for identical content.
 
-Reported incompleteness must name the specific objects. Machine-readable state must carry the complete missing and corrupt OID lists; human-readable output may bound that list as long as it states how many entries were omitted. Reports must also record whether Git LFS tooling was available, so a reader can tell whether a gap is closable on that machine.
+Reported incompleteness must name the specific objects. Machine-readable state must carry the complete missing and corrupt OID lists; human-readable output may bound that list as long as it states how many entries were omitted.
+
+Every reporting surface must state whether Git LFS tooling was available, so a reader can tell whether a gap is closable on that machine. Recording it only in persisted state is insufficient: emitted results and written reports must say so too, and two otherwise identical archives must not produce identical output when one machine has Git LFS and the other does not. Determining availability may invoke `git-lfs`, but that probe must not affect the verdict, and it is unnecessary when the history requires no objects.
 
 ### 3.3 Submodules — required detection; recursive archival is a planned capability
 

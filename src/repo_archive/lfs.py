@@ -301,9 +301,10 @@ def verify_lfs_objects(
 ) -> LfsArchiveResult:
     """Check the archive-local store against the authoritative requirement set.
 
-    Verification never invokes ``git-lfs``: the requirement set comes from
-    pointer blobs and each required object is confirmed by hashing its archived
-    content, so missing tooling cannot hide a known gap.
+    Neither the requirement set nor the integrity check uses ``git-lfs``: the
+    set comes from pointer blobs and each required object is confirmed by
+    hashing its archived content, so missing tooling cannot hide a known gap.
+    Availability is reported separately by :func:`verify_lfs_archive`.
     """
     if inventory is None:
         resolved = enumerate_lfs_oids(mirror_path, runner, include_attributes=True)
@@ -402,6 +403,20 @@ def _measure_after_incomplete_transfer(
             f"{verified.component.message} {summarize_lfs_gap(manifest)} {diagnostic}",
         ),
     )
+
+
+def describe_lfs_tooling(manifest: dict[str, object]) -> str:
+    """State whether Git LFS tooling was found, for emitted and persisted output.
+
+    Empty when availability was not measured, which is the case when the history
+    requires no objects and there is nothing a fetch could do.
+    """
+    available = manifest.get("tooling_available")
+    if available is True:
+        return "Git LFS tooling is available."
+    if available is False:
+        return "Git LFS tooling is unavailable on this machine."
+    return ""
 
 
 def summarize_lfs_gap(manifest: dict[str, object]) -> str:

@@ -115,7 +115,8 @@ All recorded paths must be relative to the snapshot subtree.
 - Because both layers measure the same content the same way, a snapshot and a
   full archive verification of the same refs and payloads must reach the same
   completeness verdict. Neither layer may let a status recorded by an earlier
-  attempt override what it measures now.
+  attempt override what it measures now, and neither may let the presence or
+  absence of the `git-lfs` executable change that verdict.
 - For each available, verified object, attempt materialization in this order:
   **reflink → hard link → copy**.
 - Failure of reflink or hard-link optimization is non-fatal when a later method

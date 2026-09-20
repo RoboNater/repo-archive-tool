@@ -693,6 +693,29 @@ bounded summary. Shared history-building helpers moved to
 `tests/integration/lfs_helpers.py`. Both schema counters remain at 1; the added
 `diagnostic` key is additive and optional.
 
+**Phase 6.5 review round r2 2026-09-19:** Round r2 confirmed r1-1 and r1-3
+resolved and accepted both flagged judgment calls: reporting `complete` after a
+failed transfer over an intact store, and keeping the full OID arrays in the
+manifest rather than expanding the result schema.
+
+The residual part of r1-2 is fixed. Measured `tooling_available` was persisted
+but never emitted, so two archives differing only in whether Git LFS was
+installed produced identical results and reports. `describe_lfs_tooling` now
+contributes an availability statement to the verification component, which is
+both emitted and written to `reports/latest.json`. No claim is made when the
+history requires no objects, because nothing could be fetched. Regression tests
+cover the absent case, the present case, and the inequality of the two reports.
+
+Nonblocking r2-1 was accepted and fixed in the same change rather than deferred,
+because it was a factual error this branch introduced: `docs/usage.md` claimed
+verification never invokes `git-lfs`, which stopped being true when
+`verify_lfs_archive` began probing `git lfs version`. The documentation now
+separates the two steps that decide the verdict, neither of which uses Git LFS,
+from the availability probe, which cannot change the outcome. The same
+distinction was corrected in the `verify_lfs_objects` docstring and the README.
+
+Both schema counters remain at 1.
+
 ## Phase 7: Complete Lifecycle Validation and MVP Readiness
 
 Treat this phase as an acceptance audit, not the point where testing or

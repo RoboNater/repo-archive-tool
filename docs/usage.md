@@ -437,7 +437,13 @@ Two cases follow from this rule and are worth knowing:
 When the required set is non-empty and Git LFS is available, backup and update
 run the equivalent of `git lfs fetch --all`, store objects under
 `mirror.git/lfs`, and verify every required object by hashing its archived
-content. Verification never invokes `git-lfs`.
+content.
+
+Neither step that decides the verdict uses `git-lfs`. The requirement set is
+parsed from Git history, and each required object is checked by hashing the
+bytes in the archive. Full verification does run `git lfs version` once, purely
+to report whether tooling is present to close a gap; that probe cannot change
+the outcome, and it is skipped when the history requires no objects.
 
 Because the requirement set does not depend on the tooling, a missing
 `git-lfs` cannot hide a gap:
@@ -482,8 +488,10 @@ state untouched.
 When objects are missing or corrupt, the component message names the first few
 OIDs and says how many more there are; `manifest.json` keeps the complete
 `missing_objects` and `corrupt_objects` lists. Verification also records
-`tooling_available`, so a report says whether Git LFS is present to close the
-gap.
+`tooling_available` and states it in the component message, so the emitted
+result and the written report both say whether Git LFS is present to close the
+gap rather than leaving it to the manifest alone. No availability claim is made
+when the history requires no objects, because there is nothing to fetch.
 
 ### When a transfer does not complete
 

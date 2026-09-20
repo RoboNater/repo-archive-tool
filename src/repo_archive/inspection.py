@@ -13,7 +13,11 @@ from repo_archive.archive import (
     _state_message,
 )
 from repo_archive.git import CommandResult, GitRunner
-from repo_archive.lfs import summarize_lfs_gap, verify_lfs_archive
+from repo_archive.lfs import (
+    describe_lfs_tooling,
+    summarize_lfs_gap,
+    verify_lfs_archive,
+)
 from repo_archive.manifest import Manifest, load_manifest, write_json_atomic
 from repo_archive.remote import normalize_remote
 from repo_archive.reporting import write_latest_reports
@@ -196,9 +200,16 @@ def _lfs_verification_component(
     """
     verified = verify_lfs_archive(layout.mirror_path, runner)
     component = verified.component
-    gap = summarize_lfs_gap(verified.manifest)
-    if gap:
-        component = replace(component, message=f"{component.message} {gap}")
+    detail = " ".join(
+        part
+        for part in (
+            summarize_lfs_gap(verified.manifest),
+            describe_lfs_tooling(verified.manifest),
+        )
+        if part
+    )
+    if detail:
+        component = replace(component, message=f"{component.message} {detail}")
     return component, verified.manifest
 
 
