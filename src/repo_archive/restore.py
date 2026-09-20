@@ -16,6 +16,7 @@ from repo_archive.filesystem import (
     sha256_file,
 )
 from repo_archive.git import CommandResult, GitRunner
+from repo_archive.lfs import enumerate_lfs_oids
 from repo_archive.manifest import load_manifest
 from repo_archive.reporting import add_report_write_warning, write_latest_reports
 from repo_archive.results import (
@@ -24,11 +25,7 @@ from repo_archive.results import (
     ErrorKind,
     OperationResult,
 )
-from repo_archive.snapshots import (
-    enumerate_lfs_oids,
-    load_snapshot_record,
-    verify_snapshot_path,
-)
+from repo_archive.snapshots import load_snapshot_record, verify_snapshot_path
 
 _SNAPSHOT_ID = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{6}\.[0-9]{6}Z$")
 
