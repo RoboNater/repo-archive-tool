@@ -402,7 +402,7 @@ def test_missing_git_lfs_tool_marks_detected_repository_partial(
     assert result.outcome is Outcome.PARTIAL
     assert result.exit_code == 3
     manifest = load_manifest(layout.manifest_path)
-    assert manifest.lfs["reason"] == "objects-incomplete"
+    assert manifest.lfs["reason"] == "tool-unavailable"
     assert manifest.lfs["tooling_available"] is False
     assert manifest.lfs["expected_object_count"] == 1
     assert manifest.lfs["missing_objects"] == [oid]

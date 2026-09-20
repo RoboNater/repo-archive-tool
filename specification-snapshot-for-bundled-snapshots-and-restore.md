@@ -112,6 +112,10 @@ All recorded paths must be relative to the snapshot subtree.
   [project specification](repo-archive-tool-spec.md), and the archive,
   snapshot, and restore layers must share one implementation of it so their
   reported completeness cannot disagree about the same content.
+- Because both layers measure the same content the same way, a snapshot and a
+  full archive verification of the same refs and payloads must reach the same
+  completeness verdict. Neither layer may let a status recorded by an earlier
+  attempt override what it measures now.
 - For each available, verified object, attempt materialization in this order:
   **reflink → hard link → copy**.
 - Failure of reflink or hard-link optimization is non-fatal when a later method

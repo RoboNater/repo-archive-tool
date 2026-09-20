@@ -80,6 +80,16 @@ Because the required set does not depend on the `git-lfs` executable, the absenc
 
 The tool must never silently treat an archive with a known, unmet LFS requirement as complete.
 
+When a transfer cannot run or does not complete, the tool must still measure the local store against the already known requirement set rather than reporting an unknown. It must record why the transfer fell short and retain the underlying diagnostic, and it must report the archive as complete when the store holds every required object regardless of that failure.
+
+#### Verification is authoritative over recorded history
+
+Verification recomputes the requirement set and hashes every required object, so its result describes the archive's present state. A status recorded by an earlier attempt must not override it: an archive that now holds the complete required set verifies as complete whether the earlier attempt was skipped with `--no-lfs`, failed to fetch, or ran without Git LFS installed. Full verification must refresh the recorded LFS state to what it measured; a mode that does not measure LFS must leave that state untouched.
+
+This is what prevents the archive and snapshot layers from reporting different completeness for identical content.
+
+Reported incompleteness must name the specific objects. Machine-readable state must carry the complete missing and corrupt OID lists; human-readable output may bound that list as long as it states how many entries were omitted. Reports must also record whether Git LFS tooling was available, so a reader can tell whether a gap is closable on that machine.
+
 ### 3.3 Submodules — required detection; recursive archival is a planned capability
 
 The tool must inspect `.gitmodules` where present and identify referenced submodule repositories.

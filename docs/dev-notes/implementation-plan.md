@@ -654,6 +654,45 @@ under the new definition. New coverage in
 `hash-object`/`mktree`/`commit-tree` so the divergence cases reproduce whether
 or not Git LFS is installed on the machine running the suite.
 
+**Phase 6.5 review hardening 2026-09-19:** Review round r1 on PR #22 found
+that the new definition was not reaching users through the public verification
+and failure paths. All three findings were accepted.
+
+Current verification is now authoritative over recorded history. The
+`inspection.py` rule that retained any previous `partial` status was removed: it
+kept a legacy `tool-unavailable` record forcing `verify` to `partial`/3 on an
+archive whose required store was intact, while a snapshot of identical content
+returned `complete`/0 — exactly the archive/snapshot discrepancy issue #15
+exists to remove. Full verification now refreshes the manifest `lfs` record to
+what it measured; quick verification does not measure LFS and leaves it
+untouched. The retention rule is gone rather than narrowed to `--no-lfs`,
+because the requirement set is derived from history and every object is hashed,
+so an intact store is complete regardless of why an earlier attempt fell short.
+
+`verify_lfs_archive` returns the full `LfsArchiveResult` instead of only its
+component, so the freshly computed gap reaches the CLI result, the persisted
+report, and the manifest. Human-readable messages name the first five OIDs and
+state how many more there are, following the bounded-summary convention already
+used for submodules, while the manifest retains the complete lists.
+Verification probes `git lfs version` only to record `tooling_available`, never
+to decide the verdict.
+
+Failed and impossible transfers now measure the local store instead of
+returning early. `_measure_after_incomplete_transfer` is shared by the
+tool-unavailable and fetch-failed paths: both record the exact
+missing/corrupt OIDs, the tracking metadata, a `reason` naming the transfer
+stage, and a `diagnostic` holding the tool message. A transfer failure over an
+already intact store reports `complete`, since no data is missing.
+
+Regression coverage lives in `tests/integration/test_lfs_reporting.py` and
+exercises the public commands: a stale `tool-unavailable` manifest, archive and
+snapshot agreement on identical content, `verify --json` plus the written report
+and manifest naming the missing OID, failed fetch through `backup` and
+`update`, quick-mode record preservation, `--no-lfs` reconciliation, and the
+bounded summary. Shared history-building helpers moved to
+`tests/integration/lfs_helpers.py`. Both schema counters remain at 1; the added
+`diagnostic` key is additive and optional.
+
 ## Phase 7: Complete Lifecycle Validation and MVP Readiness
 
 Treat this phase as an acceptance audit, not the point where testing or

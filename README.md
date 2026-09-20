@@ -171,6 +171,13 @@ well as the aggregate exit code.
   missing or corrupt OIDs. `--no-lfs` intentionally accepts a `partial`
   archive and reports how many objects were skipped.
 
+  Verification is authoritative over recorded history. It re-derives the
+  requirement set and hashes every required object, so an archive left
+  `partial` by a skipped, failed, or untooled fetch verifies `complete` once it
+  holds the full set, and full verification refreshes the recorded LFS state.
+  A failed or impossible transfer is still measured against the local store, so
+  the exact gap and the underlying tool diagnostic are both reported.
+
   Two consequences are worth knowing. A valid pointer blob counts as required
   even when its path is not matched by a `filter=lfs` rule at that commit. A
   path that a `filter=lfs` rule matches but that was committed as raw content

@@ -13,7 +13,7 @@ from repo_archive.archive import (
     _state_message,
 )
 from repo_archive.git import CommandResult, GitRunner
-from repo_archive.lfs import verify_lfs_archive
+from repo_archive.lfs import summarize_lfs_gap, verify_lfs_archive
 from repo_archive.manifest import Manifest, load_manifest, write_json_atomic
 from repo_archive.remote import normalize_remote
 from repo_archive.reporting import write_latest_reports
@@ -77,6 +77,7 @@ def verify_archive(
     """Verify archive structure and, in full mode, Git object integrity and bundles."""
     runner = runner or GitRunner()
     components: list[ComponentResult] = []
+    lfs_record: dict[str, object] | None = None
     try:
         manifest = load_manifest(layout.manifest_path)
     except (FileNotFoundError, ValueError) as error:
@@ -128,13 +129,16 @@ def verify_archive(
                 "git integrity", fsck, ErrorKind.VERIFICATION, "Git fsck passed."
             )
         )
-        components.append(_lfs_verification_component(layout, manifest, runner))
+        lfs_component, lfs_record = _lfs_verification_component(layout, runner)
+        components.append(lfs_component)
         components.extend(_verify_bundles(layout, runner, deep=deep))
 
     result = OperationResult("verify", layout.path, components=tuple(components))
     if all(component.status != ComponentStatus.FAILED for component in components):
         mode = "deep" if deep else ("full" if full else "quick")
-        _write_successful_verification(layout, manifest, mode, result.outcome.value)
+        _write_successful_verification(
+            layout, manifest, mode, result.outcome.value, lfs=lfs_record
+        )
     return _record(layout, result)
 
 
@@ -166,7 +170,10 @@ def _status_component(name: str, value: dict[str, object]) -> ComponentResult:
     if name == "lfs" and value.get("detected"):
         count = value.get("expected_object_count")
         detail += " Git LFS detected"
-        detail += f"; {count} expected objects." if count is not None else "."
+        detail += f"; {count} required objects." if count is not None else "."
+        gap = summarize_lfs_gap(value)
+        if gap:
+            detail += f" {gap}"
     if name == "submodules" and value.get("detected"):
         repositories = value.get("repositories", [])
         count = len(repositories) if isinstance(repositories, list) else 0
@@ -178,21 +185,21 @@ def _status_component(name: str, value: dict[str, object]) -> ComponentResult:
 
 
 def _lfs_verification_component(
-    layout: ArchiveLayout, manifest: Manifest, runner: GitRunner
-) -> ComponentResult:
+    layout: ArchiveLayout, runner: GitRunner
+) -> tuple[ComponentResult, dict[str, object]]:
+    """Re-measure LFS completeness and return the component and fresh record.
+
+    The freshly computed result is authoritative. A previous attempt's status is
+    not carried forward: the requirement set is derived from Git history and
+    every required object is hashed here, so an archive that now holds the
+    complete set is complete no matter why an earlier attempt fell short.
+    """
     verified = verify_lfs_archive(layout.mirror_path, runner)
-    if (
-        manifest.lfs.get("status") == "partial"
-        and verified.status == ComponentStatus.COMPLETE
-    ):
-        return ComponentResult(
-            "lfs",
-            ComponentStatus.PARTIAL,
-            (verified.message or "Git LFS verification passed.")
-            + " The manifest still records an intentionally or previously partial LFS "
-            "archive; run backup or update with LFS enabled.",
-        )
-    return verified
+    component = verified.component
+    gap = summarize_lfs_gap(verified.manifest)
+    if gap:
+        component = replace(component, message=f"{component.message} {gap}")
+    return component, verified.manifest
 
 
 def _metadata_component(manifest: Manifest) -> ComponentResult:
@@ -380,7 +387,12 @@ def _manifest_failure(
 
 
 def _write_successful_verification(
-    layout: ArchiveLayout, manifest: Manifest, mode: str, outcome: str
+    layout: ArchiveLayout,
+    manifest: Manifest,
+    mode: str,
+    outcome: str,
+    *,
+    lfs: dict[str, object] | None = None,
 ) -> None:
     archive = dict(manifest.archive)
     archive.update(
@@ -390,9 +402,10 @@ def _write_successful_verification(
             "last_verification_outcome": outcome,
         }
     )
-    write_json_atomic(
-        layout.manifest_path, replace(manifest, archive=archive).to_dict()
-    )
+    updated = replace(manifest, archive=archive)
+    if lfs is not None:
+        updated = replace(updated, lfs=lfs)
+    write_json_atomic(layout.manifest_path, updated.to_dict())
 
 
 def _record(layout: ArchiveLayout, result: OperationResult) -> OperationResult:

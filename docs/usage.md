@@ -463,10 +463,37 @@ repo-archive update <archive-path> --no-lfs
 ```
 
 When the history requires LFS objects, this records a partial LFS status,
-reports how many objects were skipped, and exits with code `3`. A later full
-verification keeps that partial status even if the objects currently present
-pass checks. Run a successful LFS-enabled `backup` or `update` to refresh the
-manifest's completeness state.
+reports how many objects were skipped, and exits with code `3`.
+
+### Verification is authoritative
+
+Full verification re-derives the requirement set from Git history and hashes
+every required object, so its answer describes the archive as it is now. It is
+not overridden by the status an earlier attempt recorded. An archive that was
+left `partial` by a skipped fetch, a failed fetch, or absent tooling verifies
+`complete` and exits `0` once it holds the full required set, and full
+verification refreshes the manifest's `lfs` record to match what it measured.
+This is what keeps `verify` and `snapshot` from disagreeing about identical
+content.
+
+Quick verification does not measure LFS and therefore leaves the recorded `lfs`
+state untouched.
+
+When objects are missing or corrupt, the component message names the first few
+OIDs and says how many more there are; `manifest.json` keeps the complete
+`missing_objects` and `corrupt_objects` lists. Verification also records
+`tooling_available`, so a report says whether Git LFS is present to close the
+gap.
+
+### When a transfer does not complete
+
+If Git LFS is unavailable, or a fetch fails or only partly succeeds, the tool
+still measures the local store against the already known requirement set rather
+than reporting an unknown. The result and manifest carry the exact gap, `reason`
+records why the transfer fell short (`tool-unavailable` or `fetch-failed`), and
+`diagnostic` retains the underlying tool message. If the store turns out to hold
+everything anyway, the archive is `complete` and the transfer problem is
+reported alongside it.
 
 ## Submodule behavior
 

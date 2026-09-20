@@ -25,6 +25,7 @@ _MAX_POINTER_SIZE = 1024
 _OID_LINE = re.compile(r"^oid sha256:([0-9a-fA-F]{64})$")
 _SIZE_LINE = re.compile(r"^size ([0-9]+)$")
 _EXTENSION_LINE = re.compile(r"^ext-[0-9]+-[A-Za-z0-9][A-Za-z0-9.-]* .+$")
+_SUMMARIZED_OIDS = 5
 
 
 @dataclass(frozen=True)
@@ -221,7 +222,14 @@ def archive_lfs(
 
     version = runner.lfs("version", cwd=mirror_path)
     if not version.succeeded:
-        return _archive_without_tooling(mirror_path, runner, inventory, version)
+        return _measure_after_incomplete_transfer(
+            mirror_path,
+            runner,
+            inventory,
+            reason="tool-unavailable",
+            diagnostic="git-lfs is unavailable: " + _command_message(version),
+            tooling_available=False,
+        )
 
     storage = runner.git("config", "lfs.storage", "lfs", cwd=mirror_path)
     if not storage.succeeded:
@@ -235,12 +243,13 @@ def archive_lfs(
 
     fetched = runner.lfs("fetch", "--all", cwd=mirror_path)
     if not fetched.succeeded:
-        return _partial(
-            True,
-            "Git LFS fetch failed: " + _command_message(fetched),
+        return _measure_after_incomplete_transfer(
+            mirror_path,
+            runner,
+            inventory,
             reason="fetch-failed",
+            diagnostic="Git LFS fetch failed: " + _command_message(fetched),
             tooling_available=True,
-            expected_object_count=len(required),
         )
 
     verified = verify_lfs_objects(
@@ -259,9 +268,28 @@ def archive_lfs(
     return verified
 
 
-def verify_lfs_archive(mirror_path: Path, runner: GitRunner) -> ComponentResult:
-    """Verify LFS completeness without fetching or changing archived refs."""
-    return verify_lfs_objects(mirror_path, runner).component
+def verify_lfs_archive(mirror_path: Path, runner: GitRunner) -> LfsArchiveResult:
+    """Verify LFS completeness without fetching or changing archived refs.
+
+    Returns the full result, not just its component, so callers can publish the
+    exact current gap and refresh the persisted LFS record. Git LFS is probed
+    only to report whether tooling is available to close a gap; its presence
+    never affects the verdict.
+    """
+    inventory = enumerate_lfs_oids(mirror_path, runner, include_attributes=True)
+    if isinstance(inventory, CommandResult):
+        return _partial(
+            None,
+            "Git LFS requirements could not be determined: "
+            + _command_message(inventory),
+            reason="enumeration-failed",
+        )
+    tooling_available = None
+    if inventory.required_oids:
+        tooling_available = runner.lfs("version", cwd=mirror_path).succeeded
+    return verify_lfs_objects(
+        mirror_path, runner, inventory=inventory, tooling_available=tooling_available
+    )
 
 
 def verify_lfs_objects(
@@ -335,36 +363,63 @@ def verify_lfs_objects(
     )
 
 
-def _archive_without_tooling(
+def _measure_after_incomplete_transfer(
     mirror_path: Path,
     runner: GitRunner,
     inventory: LfsInventory,
-    version: CommandResult,
+    *,
+    reason: str,
+    diagnostic: str,
+    tooling_available: bool,
 ) -> LfsArchiveResult:
-    """Report the exact gap when git-lfs cannot fetch a known requirement set."""
+    """Report the exact gap when a transfer could not run or did not complete.
+
+    The requirement set is already known, so a failed or impossible fetch is
+    still measured against the local store rather than reported as an unknown.
+    """
     verified = verify_lfs_objects(
-        mirror_path, runner, inventory=inventory, tooling_available=False
+        mirror_path, runner, inventory=inventory, tooling_available=tooling_available
     )
     count = len(inventory.required_oids)
+    manifest = dict(verified.manifest)
+    manifest["diagnostic"] = diagnostic
     if verified.component.status == ComponentStatus.COMPLETE:
         return LfsArchiveResult(
-            verified.manifest,
+            manifest,
             ComponentResult(
                 "lfs",
                 ComponentStatus.COMPLETE,
-                f"git-lfs is unavailable, but all {count} required Git LFS "
-                "object(s) are already archived.",
+                f"All {count} required Git LFS object(s) are archived and verified, "
+                f"although {diagnostic}",
             ),
         )
+    manifest["reason"] = reason
     return LfsArchiveResult(
-        verified.manifest,
+        manifest,
         ComponentResult(
             "lfs",
             ComponentStatus.PARTIAL,
-            f"{verified.component.message} git-lfs is unavailable and cannot "
-            "fetch the gap: " + _command_message(version),
+            f"{verified.component.message} {summarize_lfs_gap(manifest)} {diagnostic}",
         ),
     )
+
+
+def summarize_lfs_gap(manifest: dict[str, object]) -> str:
+    """Return a bounded human-readable list of the missing and corrupt OIDs.
+
+    The manifest retains every OID; human output names only the first few so a
+    large gap cannot flood a component message or report.
+    """
+    parts = []
+    for label, key in (("Missing", "missing_objects"), ("Corrupt", "corrupt_objects")):
+        oids = manifest.get(key)
+        if not isinstance(oids, list) or not oids:
+            continue
+        shown = ", ".join(str(oid) for oid in oids[:_SUMMARIZED_OIDS])
+        if len(oids) > _SUMMARIZED_OIDS:
+            shown += f", and {len(oids) - _SUMMARIZED_OIDS} more"
+        parts.append(f"{label}: {shown}.")
+    return " ".join(parts)
 
 
 def _no_objects_required(
