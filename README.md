@@ -157,10 +157,36 @@ well as the aggregate exit code.
 
 ## Current boundaries
 
-- Git LFS: backup and update detect historical LFS use, run the equivalent of
-  `git lfs fetch --all`, and verify expected local objects when Git LFS is
-  installed. Missing tooling or objects produce a `partial` archive.
-  `--no-lfs` intentionally accepts that partial state.
+- Git LFS: the objects an archive requires are determined from Git history
+  alone, by parsing valid LFS pointer blobs reachable from every archived ref.
+  That one definition governs archives, snapshots, and restores; Git LFS
+  tooling fetches payloads but never decides what should exist. Backup and
+  update run the equivalent of `git lfs fetch --all` and then verify every
+  required object by hashing its archived content.
+
+  Because the requirement set does not depend on the `git-lfs` executable,
+  missing tooling is not a blind spot. An archive that already holds every
+  required object verifies `complete` and exits `0` even with no `git-lfs`
+  installed; a genuine gap reports `partial`, exits `3`, and names the exact
+  missing or corrupt OIDs. `--no-lfs` intentionally accepts a `partial`
+  archive and reports how many objects were skipped.
+
+  Verification is authoritative over recorded history. It re-derives the
+  requirement set and hashes every required object, so an archive left
+  `partial` by a skipped, failed, or untooled fetch verifies `complete` once it
+  holds the full set, and full verification refreshes the recorded LFS state.
+  A failed or impossible transfer is still measured against the local store, so
+  the exact gap and the underlying tool diagnostic are both reported. Neither
+  the requirement set nor the integrity check uses `git-lfs`; full verification
+  probes `git lfs version` only to state in its result and report whether
+  tooling is present to close a gap.
+
+  Two consequences are worth knowing. A valid pointer blob counts as required
+  even when its path is not matched by a `filter=lfs` rule at that commit. A
+  path that a `filter=lfs` rule matches but that was committed as raw content
+  requires nothing, because no pointer means no object to fetch; the archive is
+  `complete`, and the declared tracking is reported as `tracking_declared` in
+  the manifest so the situation is visible rather than silent.
 - Submodules: definitions and pinned commits are recorded across archived refs,
   but child repositories are not recursively archived. Detected submodules
   produce `complete-with-warnings`.

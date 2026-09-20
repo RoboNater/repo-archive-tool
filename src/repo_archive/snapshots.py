@@ -5,7 +5,6 @@ from __future__ import annotations
 import errno
 import json
 import os
-import re
 import shutil
 import tempfile
 from dataclasses import dataclass, replace
@@ -16,6 +15,7 @@ from typing import Any
 from repo_archive.archive import ArchiveLayout
 from repo_archive.filesystem import safe_sha256_file, sha256_file, try_reflink
 from repo_archive.git import CommandResult, GitRunner
+from repo_archive.lfs import enumerate_lfs_oids
 from repo_archive.manifest import Manifest, load_manifest, write_json_atomic
 from repo_archive.reporting import add_report_write_warning, write_latest_reports
 from repo_archive.results import (
@@ -26,17 +26,6 @@ from repo_archive.results import (
 )
 
 SNAPSHOT_SCHEMA_VERSION = 1
-_MAX_POINTER_SIZE = 1024
-_OID_LINE = re.compile(r"^oid sha256:([0-9a-fA-F]{64})$")
-_SIZE_LINE = re.compile(r"^size ([0-9]+)$")
-_EXTENSION_LINE = re.compile(r"^ext-[0-9]+-[A-Za-z0-9][A-Za-z0-9.-]* .+$")
-
-
-@dataclass(frozen=True)
-class LfsInventory:
-    """Historical LFS objects required by all archived refs."""
-
-    required_oids: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -227,67 +216,6 @@ def create_snapshot(
         ),
     )
     return _record(layout, result, record_result)
-
-
-def enumerate_lfs_oids(
-    repository: Path, runner: GitRunner
-) -> LfsInventory | CommandResult:
-    """Find valid LFS pointer blobs reachable from every ref without git-lfs."""
-    required: set[str] = set()
-    with (
-        tempfile.TemporaryFile(mode="w+b") as object_ids,
-        tempfile.TemporaryFile(mode="w+b") as candidates,
-    ):
-
-        def collect_object(line: str) -> None:
-            oid = line.split(" ", 1)[0]
-            if oid:
-                object_ids.write(oid.encode("ascii") + b"\n")
-
-        listed = runner.git_stream_stdout(
-            "rev-list", "--objects", "--all", cwd=repository, on_line=collect_object
-        )
-        if not listed.succeeded:
-            return listed
-        object_ids.seek(0)
-
-        def collect_candidate(line: str) -> None:
-            parts = line.split()
-            if len(parts) != 3 or parts[1] != "blob":
-                return
-            try:
-                size = int(parts[2])
-            except ValueError:
-                return
-            if size <= _MAX_POINTER_SIZE:
-                candidates.write(parts[0].encode("ascii") + b"\n")
-
-        checked = runner.git_stream_stdout(
-            "cat-file",
-            "--batch-check=%(objectname) %(objecttype) %(objectsize)",
-            cwd=repository,
-            on_line=collect_candidate,
-            input_stream=object_ids,
-        )
-        if not checked.succeeded:
-            return checked
-        candidates.seek(0)
-
-        def inspect_blob(_oid: str, content: bytes) -> None:
-            try:
-                pointer = content.decode("ascii")
-            except UnicodeDecodeError:
-                return
-            pointer_oid = _parse_lfs_pointer(pointer)
-            if pointer_oid is not None:
-                required.add(pointer_oid)
-
-        inspected = runner.git_batch_blobs(
-            cwd=repository, object_ids=candidates, on_blob=inspect_blob
-        )
-        if not inspected.succeeded:
-            return inspected
-    return LfsInventory(tuple(sorted(required)))
 
 
 def verify_snapshot_path(
@@ -629,22 +557,6 @@ def _bundle_refs(
         if separator and oid and name:
             refs.append({"name": name.strip(), "oid": oid.lower()})
     return sorted(refs, key=lambda item: item["name"])
-
-
-def _parse_lfs_pointer(content: str) -> str | None:
-    lines = content.splitlines()
-    if not lines or lines[0] != "version https://git-lfs.github.com/spec/v1":
-        return None
-    index = 1
-    while index < len(lines) and _EXTENSION_LINE.fullmatch(lines[index]):
-        index += 1
-    if index + 2 != len(lines):
-        return None
-    oid_match = _OID_LINE.fullmatch(lines[index])
-    size_match = _SIZE_LINE.fullmatch(lines[index + 1])
-    if oid_match is None or size_match is None:
-        return None
-    return oid_match.group(1).lower()
 
 
 def _link_or_copy(

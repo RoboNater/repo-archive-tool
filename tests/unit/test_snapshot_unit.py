@@ -6,7 +6,8 @@ import hashlib
 from pathlib import Path
 from unittest.mock import patch
 
-from repo_archive.snapshots import _materialize_lfs_payload, _parse_lfs_pointer
+from repo_archive.lfs import parse_lfs_pointer
+from repo_archive.snapshots import _materialize_lfs_payload
 
 
 def test_valid_lfs_pointer_is_parsed() -> None:
@@ -18,13 +19,13 @@ def test_valid_lfs_pointer_is_parsed() -> None:
         "size 42\n"
     )
 
-    assert _parse_lfs_pointer(pointer) == oid
+    assert parse_lfs_pointer(pointer) == oid
 
 
 def test_invalid_lfs_pointer_is_rejected() -> None:
-    assert _parse_lfs_pointer("oid sha256:" + "a" * 64) is None
+    assert parse_lfs_pointer("oid sha256:" + "a" * 64) is None
     assert (
-        _parse_lfs_pointer(
+        parse_lfs_pointer(
             "version https://git-lfs.github.com/spec/v1\n"
             "size 42\n"
             f"oid sha256:{'a' * 64}\n"

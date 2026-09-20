@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import shutil
 import subprocess
 from collections.abc import Callable
@@ -50,6 +51,28 @@ class DetectionFailureRunner(GitRunner):
                 ("git", *arguments), 1, "", "simulated rev-list failure"
             )
         return super().git_stream_stdout(*arguments, cwd=cwd, on_line=on_line)
+
+
+def commit_lfs_pointer(worktree: Path, path: str, content: bytes) -> str:
+    """Commit a valid LFS pointer at *path* without running any clean filter."""
+    oid = hashlib.sha256(content).hexdigest()
+    pointer = (
+        "version https://git-lfs.github.com/spec/v1\n"
+        f"oid sha256:{oid}\n"
+        f"size {len(content)}\n"
+    )
+    blob = subprocess.run(
+        ("git", "hash-object", "-w", "--stdin"),
+        cwd=worktree,
+        check=True,
+        capture_output=True,
+        text=True,
+        input=pointer,
+    ).stdout.strip()
+    git("update-index", "--add", "--cacheinfo", f"100644,{blob},{path}", cwd=worktree)
+    git("commit", "-m", f"add {path}", cwd=worktree)
+    git("push", cwd=worktree)
+    return oid
 
 
 def create_remote(tmp_path: Path) -> tuple[Path, Path]:
@@ -247,6 +270,7 @@ def test_no_lfs_marks_historical_lfs_use_as_partial(tmp_path: Path) -> None:
     git("add", ".gitattributes", cwd=worktree)
     git("commit", "-m", "declare lfs attributes", cwd=worktree)
     git("push", cwd=worktree)
+    commit_lfs_pointer(worktree, "payload.bin", b"historical lfs payload\n")
     git("rm", ".gitattributes", cwd=worktree)
     git("commit", "-m", "remove current attributes", cwd=worktree)
     git("push", cwd=worktree)
@@ -277,12 +301,15 @@ def test_nested_lfs_attributes_are_detected(tmp_path: Path) -> None:
     git("add", "assets/.gitattributes", cwd=worktree)
     git("commit", "-m", "scope lfs to assets", cwd=worktree)
     git("push", cwd=worktree)
+    commit_lfs_pointer(worktree, "assets/payload.bin", b"nested lfs payload\n")
     layout = ArchiveLayout(tmp_path / "archives" / "project")
 
     result = backup_archive(str(remote), layout, lfs_enabled=False)
 
     assert result.outcome is Outcome.PARTIAL
-    assert load_manifest(layout.manifest_path).lfs["detected"] is True
+    manifest = load_manifest(layout.manifest_path)
+    assert manifest.lfs["detected"] is True
+    assert manifest.lfs["tracking_declared"] is True
 
 
 def test_non_utf8_attributes_do_not_escape_structured_results(tmp_path: Path) -> None:
@@ -293,6 +320,7 @@ def test_non_utf8_attributes_do_not_escape_structured_results(tmp_path: Path) ->
     git("add", ".gitattributes", cwd=worktree)
     git("commit", "-m", "add non-utf8 attributes", cwd=worktree)
     git("push", cwd=worktree)
+    commit_lfs_pointer(worktree, "payload.bin", b"payload beside bad attributes\n")
     layout = ArchiveLayout(tmp_path / "archives" / "project")
 
     result = backup_archive(str(remote), layout, lfs_enabled=False)
@@ -362,6 +390,7 @@ def test_missing_git_lfs_tool_marks_detected_repository_partial(
     git("add", ".gitattributes", cwd=worktree)
     git("commit", "-m", "declare lfs attributes", cwd=worktree)
     git("push", cwd=worktree)
+    oid = commit_lfs_pointer(worktree, "payload.bin", b"unfetchable payload\n")
     layout = ArchiveLayout(tmp_path / "archives" / "project")
 
     result = backup_archive(
@@ -371,9 +400,12 @@ def test_missing_git_lfs_tool_marks_detected_repository_partial(
     )
 
     assert result.outcome is Outcome.PARTIAL
+    assert result.exit_code == 3
     manifest = load_manifest(layout.manifest_path)
     assert manifest.lfs["reason"] == "tool-unavailable"
     assert manifest.lfs["tooling_available"] is False
+    assert manifest.lfs["expected_object_count"] == 1
+    assert manifest.lfs["missing_objects"] == [oid]
 
 
 def test_submodules_are_recorded_and_reported_as_a_warning(tmp_path: Path) -> None:

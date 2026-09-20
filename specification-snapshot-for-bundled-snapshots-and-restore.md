@@ -107,6 +107,16 @@ All recorded paths must be relative to the snapshot subtree.
   executable by parsing valid LFS pointer blobs reachable from included refs.
   Git LFS tooling may fetch payloads but is not authoritative for what should
   exist.
+- This is not a snapshot-local rule. It is the project-wide definition of a
+  required LFS object, stated in §3.2 of the
+  [project specification](repo-archive-tool-spec.md), and the archive,
+  snapshot, and restore layers must share one implementation of it so their
+  reported completeness cannot disagree about the same content.
+- Because both layers measure the same content the same way, a snapshot and a
+  full archive verification of the same refs and payloads must reach the same
+  completeness verdict. Neither layer may let a status recorded by an earlier
+  attempt override what it measures now, and neither may let the presence or
+  absence of the `git-lfs` executable change that verdict.
 - For each available, verified object, attempt materialization in this order:
   **reflink → hard link → copy**.
 - Failure of reflink or hard-link optimization is non-fatal when a later method
