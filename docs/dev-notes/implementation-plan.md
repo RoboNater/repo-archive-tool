@@ -1,7 +1,7 @@
 # repo-archive-tool Implementation Plan
 
 **Status:** In progress
-**Last reviewed:** 2026-08-30
+**Last reviewed:** 2026-09-19
 **Governing specification:** [`repo-archive-tool-spec.md`](../../repo-archive-tool-spec.md)
 
 This is the working implementation plan for `repo-archive-tool`. Keep it aligned with the repository as design decisions are made and phases are completed. The specification defines product requirements; this document records the intended implementation sequence and current project state.
@@ -18,6 +18,8 @@ This is the working implementation plan for `repo-archive-tool`. Keep it aligned
 - [x] Bundle snapshots and offline restore implemented.
 - [x] Human-friendly archive naming and legacy digest-path discovery implemented.
 - [x] GitHub Actions dependencies pinned and Dependabot maintenance configured.
+- [x] Single authoritative definition of a required Git LFS object shared by the
+  archive, snapshot, and restore layers.
 
 ## Implementation Decisions
 
@@ -65,11 +67,19 @@ This is the working implementation plan for `repo-archive-tool`. Keep it aligned
   Routine verification of published snapshots validates payloads against the
   recorded inventory; independent recomputation from a bundle is an explicit
   deep mode because it requires materializing the bundled Git history.
-- Treat the independent pointer scan as authoritative for snapshot and restore
-  portability because it does not rely on Git LFS tooling. Keep
-  `git lfs ls-files --all` authoritative for archive-update compatibility with
-  installed Git LFS; verification may surface disagreement instead of silently
-  substituting one inventory for the other.
+- Treat the independent pointer-blob scan as the single authoritative definition
+  of a required LFS object for every layer: archive backup, update, and
+  verification as well as snapshot creation, snapshot verification, and restore.
+  `enumerate_lfs_oids` in `lfs.py` is the one implementation. Git LFS tooling
+  fetches payloads and is never consulted for what should exist, so
+  `git lfs ls-files --all` is no longer used for status. Superseded the earlier
+  split that kept `ls-files` authoritative at the archive layer; that split let
+  the two layers report different completeness for the same content.
+- Because the required set is independent of the `git-lfs` executable, absent
+  tooling is not by itself incompleteness. An archive holding every required
+  object is `complete` and exits 0 without Git LFS installed; a real gap is
+  `partial`, exits 3, and names the exact OIDs. Declared `filter=lfs` tracking is
+  recorded as a reported secondary signal, never as a completeness input.
 - Keep manifest schema version 1 for the additive `archive.snapshots` index;
   older manifests remain readable and snapshot creation initializes the
   optional list when absent. A future incompatible shape change must increment
@@ -300,7 +310,9 @@ object/LFS/bundle work; `--full` is the default.
 
 ## Phase 4: Git LFS and Submodule Awareness
 
-- [x] Detect LFS use by inspecting tracked `.gitattributes` content across archived refs without requiring a worktree.
+- [x] Detect LFS use across archived refs without requiring a worktree. Phase 6.5
+  replaced the `.gitattributes` gate with reachable pointer blobs as the
+  authoritative signal; the attribute scan remains as reported context.
 - [x] Detect whether `git-lfs` is installed.
 - [x] Run the equivalent of `git lfs fetch --all` when LFS is detected and not explicitly disabled.
 - [x] Verify expected LFS pointers and locally archived objects using installed Git LFS capabilities.
@@ -315,7 +327,9 @@ object/LFS/bundle work; `--full` is the default.
 **Completed 2026-08-16:** Backup and update inspect historical
 `.gitattributes` blobs reachable from archived refs, preserve the prior
 archive-local LFS store during staged refreshes, run `git lfs fetch --all`, and
-enumerate and SHA-256 verify every object reported by `git lfs ls-files --all`.
+enumerate and SHA-256 verify every required object. (Phase 6.5 replaced the
+`git lfs ls-files --all` enumeration used here with the independent
+pointer-blob scan; the SHA-256 verification of each required object remains.)
 Missing tooling, fetch/enumeration failures, missing or corrupt objects, and
 intentional `--no-lfs` operation produce a persisted `partial` result and exit
 code 3. Full verification rechecks LFS objects without fetching and retains an
@@ -595,6 +609,50 @@ matrix covers all three levels while continuing to seed only recorded payloads.
 normal working clone, an LFS-aware checkout where applicable, and a mirror that
 can be republished; the behavior is covered by automated tests and accurately
 documented.
+
+## Phase 6.5: One Authoritative LFS Requirement Set
+
+Issue [#15](https://github.com/RoboNater/repo-archive-tool/issues/15), deferred
+from the review of PR #14, resolved the two competing answers to "which LFS
+objects does this history require."
+
+- [x] Decide which enumeration is authoritative for archive-level LFS status and
+  state the decision explicitly in the specification.
+- [x] Reuse one implementation across archive verification and snapshot
+  creation, snapshot verification, and restore.
+- [x] Define behavior when `git-lfs` is absent but the required set is known,
+  including reported status and process exit code.
+- [x] Cover the three divergence cases in tests: missing tooling, a valid
+  pointer blob at a path not tracked by `filter=lfs`, and a `filter=lfs` path
+  committed as raw content.
+- [x] Update `repo-archive-tool-spec.md`, the bundled snapshot and restore
+  specification, `README.md`, and `docs/usage.md` with the single definition.
+
+**Completed 2026-09-19:** `enumerate_lfs_oids` and `parse_lfs_pointer` moved
+from `snapshots.py` to `lfs.py` and are now the one definition used by archive
+backup, update, and verification as well as snapshots and restore.
+`git lfs ls-files --all` is no longer used to determine status; `git-lfs` only
+fetches payloads. `detect_lfs` and `LfsDetection` were removed: reachable
+`.gitattributes` inspection now rides along on the same object walk and is
+reported as `tracking_declared` and `attribute_files_inspected` rather than
+gating completeness. Verification hashes every required object and never
+invokes Git LFS, so a missing executable is no longer a blind spot — an archive
+already holding the full required set is `complete` and exits 0, while a real
+gap is `partial`, exits 3, and names the exact missing or corrupt OIDs.
+`--no-lfs` now reports how many objects it skipped.
+
+The manifest keeps schema version 1 and the snapshot record keeps schema
+version 1: `tracking_declared` and `attribute_files_inspected` are additive
+optional fields, older manifests remain readable, and the snapshot record shape
+is unchanged. The reserved version-2 counters were therefore not consumed.
+
+Four existing integration tests asserted the former gitattributes-driven rule
+by declaring `filter=lfs` without committing a pointer. They were updated to
+commit a real pointer with plumbing commands, preserving their original intent
+under the new definition. New coverage in
+`tests/integration/test_lfs_definition.py` builds history with
+`hash-object`/`mktree`/`commit-tree` so the divergence cases reproduce whether
+or not Git LFS is installed on the machine running the suite.
 
 ## Phase 7: Complete Lifecycle Validation and MVP Readiness
 

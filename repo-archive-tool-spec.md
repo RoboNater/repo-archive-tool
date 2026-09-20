@@ -44,19 +44,41 @@ The tool must support:
 - Restoring/cloning a normal working repository from the archive.
 - Supporting republishing/restoring the mirror to another remote.
 
-### 3.2 Git LFS — required when detected, if Git LFS is available
+### 3.2 Git LFS — required when the history requires LFS objects
 
-The tool must detect whether Git LFS is in use.
+#### Definition of a required LFS object
 
-When LFS is detected, the tool must:
+The tool must use exactly one definition of which LFS objects a Git history requires:
+
+> A **required LFS object** is one named by a valid Git LFS pointer blob reachable from the refs under consideration.
+
+This definition is normative for every layer — archive backup, update, verification, bundle snapshots, and restore — and all of them must share one implementation of it. The archive and snapshot layers must never report different LFS completeness for the same underlying content.
+
+The definition has three consequences the tool must honor:
+
+- It must be computed from the Git object database alone, without invoking `git-lfs`. Git LFS tooling fetches payloads; it is never authoritative for what should exist.
+- A valid pointer blob is required even when its path is not matched by a `filter=lfs` rule at that commit.
+- A path matched by a `filter=lfs` rule but committed as raw content requires nothing, because no pointer means no object to fetch.
+
+Declared `filter=lfs` tracking in reachable `.gitattributes` files remains a useful secondary signal. The tool must report it, and must not use it to decide completeness.
+
+#### Required behavior
+
+When a history requires LFS objects, the tool must:
 
 - clearly report that Git objects alone are insufficient for a complete archive;
-- run an archival LFS fetch equivalent to `git lfs fetch --all`;
+- run an archival LFS fetch equivalent to `git lfs fetch --all` when Git LFS is available and fetching is not disabled;
 - preserve the resulting local LFS object store with the mirror;
-- verify, as far as the installed Git LFS tooling permits, that expected LFS objects are locally available;
-- report an incomplete backup if required LFS content could not be retrieved.
+- verify that every required object is locally available and that its content hashes to its OID;
+- report an incomplete backup, naming the exact missing or corrupt OIDs, if required LFS content could not be retrieved.
 
-If Git LFS is not installed, the tool must not silently treat the archive as complete.
+Because the required set does not depend on the `git-lfs` executable, the absence of that executable is not by itself an incompleteness:
+
+- if every required object is already archived and verifies, the archive is `complete` and the operation exits `0`, whether or not Git LFS is installed;
+- if any required object is missing or corrupt, the archive is `partial` and the operation exits `3`, whether or not Git LFS is installed; the report must state whether tooling was available to fetch the gap;
+- if the history requires no LFS objects, the archive is `complete`, including when `filter=lfs` tracking is declared but unused.
+
+The tool must never silently treat an archive with a known, unmet LFS requirement as complete.
 
 ### 3.3 Submodules — required detection; recursive archival is a planned capability
 
@@ -462,7 +484,9 @@ Examples:
 
 - Git mirror successful, no LFS, no submodules: `complete`.
 - Git mirror successful; submodules detected but recursive archival not requested/supported: `complete-with-warnings` or `partial`, depending on requested policy.
-- LFS detected but Git LFS unavailable: `partial`.
+- LFS objects required but not all present locally: `partial`, naming the missing OIDs, whether or not Git LFS is installed.
+- LFS objects required and all present locally, but Git LFS unavailable: `complete`; the required set is known from Git history, so absent tooling alone is not incompleteness.
+- `filter=lfs` tracking declared but no pointer blob present: `complete`, with the declared tracking reported.
 - Git mirror update fails: `failed`.
 - GitHub metadata requested but API permissions prevent issue export: core Git may remain complete, while overall requested operation is `partial`.
 
@@ -607,7 +631,9 @@ Cover:
 - status/completeness aggregation;
 - credential redaction;
 - submodule parsing;
-- LFS detection.
+- required-LFS-object enumeration from pointer blobs, including a pointer outside a
+  `filter=lfs` rule and a `filter=lfs` path committed as raw content;
+- LFS completeness and exit status when `git-lfs` is absent but the required set is known.
 
 ### Integration tests
 

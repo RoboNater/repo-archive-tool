@@ -226,9 +226,9 @@ free-space failures use the general-failure exit code; detected integrity
 failures use the verification-failure exit code.
 
 Snapshot creation writes a temporary sibling, creates a bundle with all
-archived refs, independently finds valid LFS pointers throughout the reachable
-history, materializes available payloads, verifies the complete subtree, and
-publishes it with one rename. A failed staging or verification attempt is
+archived refs, enumerates required LFS objects with the same pointer-blob
+definition the archive layer uses, materializes available payloads, verifies
+the complete subtree, and publishes it with one rename. A failed staging or verification attempt is
 removed and never appears as a timestamped snapshot.
 
 An archive with no refs has no bundleable Git content. `snapshot` and
@@ -409,15 +409,51 @@ Automation should inspect both the exit code and structured component results.
 
 ## Git LFS behavior
 
-Backup and update inspect reachable historical `.gitattributes` files across
-archived refs. When LFS use is detected and Git LFS is available, the tool runs
-the equivalent of `git lfs fetch --all`, stores objects under
-`mirror.git/lfs`, enumerates expected objects, and verifies their content
-hashes.
+### Which objects an archive requires
 
-If Git LFS is missing, fetching fails, or an expected object is missing or
-corrupt, the archive is reported as `partial`. The Git mirror may still be
-usable, but it is not a complete backup of the repository's LFS content.
+One definition answers "which LFS objects does this history require," and it is
+the same for archives, snapshots, and restores:
+
+> The required objects are those named by valid Git LFS pointer blobs reachable
+> from every archived ref.
+
+That set is computed from the Git object database alone. The `git-lfs`
+executable fetches payloads; it is never consulted for what should exist. The
+tool walks reachable objects, narrows them to blobs small enough to be a
+pointer, and parses those candidates.
+
+Two cases follow from this rule and are worth knowing:
+
+- A valid pointer blob is required even if its path is **not** matched by a
+  `filter=lfs` rule at that commit. The object exists in the history and must be
+  archived for the history to be restorable.
+- A path matched by a `filter=lfs` rule but committed as **raw content**
+  requires nothing. There is no pointer, so there is no object to fetch. The
+  archive is `complete`, and `manifest.json` records `tracking_declared: true`
+  so the declared-but-unused tracking is visible rather than silent.
+
+### Fetching and verifying
+
+When the required set is non-empty and Git LFS is available, backup and update
+run the equivalent of `git lfs fetch --all`, store objects under
+`mirror.git/lfs`, and verify every required object by hashing its archived
+content. Verification never invokes `git-lfs`.
+
+Because the requirement set does not depend on the tooling, a missing
+`git-lfs` cannot hide a gap:
+
+| Situation | Status | Exit code |
+| --- | --- | --- |
+| Every required object archived and hash-verified | `complete` | `0` |
+| Every required object archived, but `git-lfs` absent | `complete` | `0` |
+| Required objects missing or corrupt, with or without `git-lfs` | `partial` | `3` |
+| History requires no LFS objects | `complete` | `0` |
+
+When objects are missing, the result and manifest name the exact OIDs in
+`missing_objects` and `corrupt_objects`, and `tooling_available` records
+whether `git-lfs` could have fetched them. An archive that was populated on a
+machine with Git LFS therefore still verifies `complete` on a machine without
+it.
 
 Use `--no-lfs` on `backup` or `update` only when intentionally accepting a
 partial archive:
@@ -426,10 +462,11 @@ partial archive:
 repo-archive update <archive-path> --no-lfs
 ```
 
-When LFS is detected, this records a partial LFS status and exits with code
-`3`. A later full verification keeps that partial status even if the objects
-currently present pass checks. Run a successful LFS-enabled `backup` or
-`update` to refresh the manifest's completeness state.
+When the history requires LFS objects, this records a partial LFS status,
+reports how many objects were skipped, and exits with code `3`. A later full
+verification keeps that partial status even if the objects currently present
+pass checks. Run a successful LFS-enabled `backup` or `update` to refresh the
+manifest's completeness state.
 
 ## Submodule behavior
 
